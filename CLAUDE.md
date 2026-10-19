@@ -57,7 +57,7 @@ SWE internships. I want to understand everything.
      clear note that uploaded data is not stored.
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 374 tests passed.
+   - Latest full-suite result: 380 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -348,6 +348,20 @@ SWE internships. I want to understand everything.
 - Load is disabled when no sex column is chosen or the mapping table is
   undisplayable.
 - The 374 test count was confirmed by running pytest after step 7b-2.
+
+## Decisions made in step 7c-1a
+- Malformed genotype and phase errors from `load_colony_rows` and `load_colony`
+  begin with `Row N:`, using the same source-row counter as missing-animal-ID
+  errors. It honors `first_data_row`, counts interior blank records, and uses
+  row 2 as the first data row for the plain CSV loader.
+- The CLI's `_is_x_linked_animal_genotype_error` removes the `Row N: ` prefix
+  with a regular expression before matching the loader's error text.
+- Matching error text is fragile; a custom exception type would be more robust.
+- Ranking-time phase errors are unchanged and include the animal ID but do not
+  include a source row.
+- If either linked genotype is blank, phase text remains stored raw and
+  unvalidated during loading.
+- Full-suite result after step 7c-1a: 380 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
