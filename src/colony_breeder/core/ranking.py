@@ -17,7 +17,7 @@ from colony_breeder.core.linkage import (
     linked_offspring_distribution,
     phase_for_unambiguous_genotypes,
     phase_is_required,
-    probability_of_linked_target,
+    validate_phase_matches_genotypes,
 )
 from colony_breeder.core.relatedness import pair_flags
 
@@ -87,8 +87,10 @@ def rank_pairs(
     joint distribution. Their per_gene entries are descriptive marginal
     probabilities among survivors, not factors to multiply. Multiple
     X-linked genes are treated as unlinked (r = 1/2), an approximation.
-    Configured linked pairs are autosomal only and assume equal recombination
-    in both sexes, no crossover interference, and user-supplied r.
+    Linked-autosomal per_gene entries are also descriptive marginals among
+    survivors of their pair, not factors to multiply. Configured linked pairs
+    are autosomal only, assume equal recombination in both sexes, and use
+    user-supplied r.
 
     Animals whose normalized sex is not "M" or "F" are excluded from pairing
     and reported in excluded_animals, regardless of inheritance settings.
@@ -184,6 +186,27 @@ def rank_pairs(
         or lethals.get(pair[0])
         or lethals.get(pair[1])
     ]
+    for gene1, gene2, _ in active_linked_pairs:
+        for animal in animals:
+            if animal.sex.strip().upper() not in {"M", "F"}:
+                continue
+            phase = animal.phases.get((gene1, gene2), "").strip()
+            gene1_genotype = animal.genotypes.get(gene1, "").strip()
+            gene2_genotype = animal.genotypes.get(gene2, "").strip()
+            if not phase or not gene1_genotype or not gene2_genotype:
+                continue
+            try:
+                validate_phase_matches_genotypes(
+                    phase,
+                    gene1_genotype,
+                    gene2_genotype,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid phase for animal {animal.animal_id!r} for linked "
+                    f"gene pair ({gene1!r}, {gene2!r}): {phase!r}. {exc}"
+                ) from exc
+
     linked_genes = {
         gene
         for gene1, gene2, _ in active_linked_pairs
@@ -263,7 +286,15 @@ def rank_pairs(
                 gene1_genotype = animal.genotypes[gene1]
                 gene2_genotype = animal.genotypes[gene2]
                 if phase_is_required(gene1_genotype, gene2_genotype):
-                    phase = animal.phases.get((gene1, gene2), "").strip()
+                    phase_key = (gene1, gene2)
+                    if phase_key not in animal.phases:
+                        raise ValueError(
+                            f"Phase for animal {animal.animal_id!r} and linked "
+                            f"gene pair ({gene1!r}, {gene2!r}) is missing from "
+                            "animal.phases; the pair may not have been loaded "
+                            "or may have been loaded in a different gene order."
+                        )
+                    phase = animal.phases[phase_key].strip()
                     if not phase:
                         missing_phase = (animal, gene1, gene2)
                         break
@@ -286,7 +317,8 @@ def rank_pairs(
                     female=female,
                     reason=(
                         f"Missing phase for animal {animal.animal_id!r} "
-                        f"for linked gene pair ({gene1!r}, {gene2!r})."
+                        f"for linked gene pair ({gene1!r}, {gene2!r}). "
+                        "Phase must be written in the configured gene order for this pair."
                     ),
                     kind="missing_phase",
                     flags=flags,
@@ -337,32 +369,13 @@ def rank_pairs(
             lethal1 = lethals.get(gene1, [])
             lethal2 = lethals.get(gene2, [])
             try:
-                if target1 is None and target2 is None:
-                    distribution = linked_offspring_distribution(
-                        female_phase,
-                        male_phase,
-                        recombination_frequency,
-                        lethal_gene1=lethal1,
-                        lethal_gene2=lethal2,
-                    )
-                    joint_probability = Fraction(1)
-                else:
-                    joint_probability = probability_of_linked_target(
-                        female_phase,
-                        male_phase,
-                        recombination_frequency,
-                        target_gene1=target1,
-                        target_gene2=target2,
-                        lethal_gene1=lethal1,
-                        lethal_gene2=lethal2,
-                    )
-                    distribution = linked_offspring_distribution(
-                        female_phase,
-                        male_phase,
-                        recombination_frequency,
-                        lethal_gene1=lethal1,
-                        lethal_gene2=lethal2,
-                    )
+                distribution = linked_offspring_distribution(
+                    female_phase,
+                    male_phase,
+                    recombination_frequency,
+                    lethal_gene1=lethal1,
+                    lethal_gene2=lethal2,
+                )
             except AllOffspringLethalError:
                 skipped.append(
                     SkippedPair(
@@ -379,6 +392,28 @@ def rank_pairs(
                 )
                 linked_pair_failed = True
                 break
+            if target1 is None and target2 is None:
+                joint_probability = Fraction(1)
+            else:
+                target1_set = (
+                    {parse_genotype(genotype) for genotype in target1}
+                    if target1 is not None
+                    else None
+                )
+                target2_set = (
+                    {parse_genotype(genotype) for genotype in target2}
+                    if target2 is not None
+                    else None
+                )
+                joint_probability = sum(
+                    (
+                        probability
+                        for (genotype1, genotype2), probability in distribution.items()
+                        if (target1_set is None or genotype1 in target1_set)
+                        and (target2_set is None or genotype2 in target2_set)
+                    ),
+                    Fraction(0),
+                )
             pair_key = (gene1, gene2)
             linked_pair_probabilities[pair_key] = joint_probability
             linked_pair_distributions[pair_key] = distribution

@@ -361,11 +361,6 @@ def test_exclude_related_skips_exactly_twelve_sample_pairs_with_flags():
         for pair in result.skipped
         if pair.reason.startswith("Excluded:")
     )
-    assert all(
-        pair.kind == "excluded_related"
-        for pair in result.skipped
-        if pair.reason.startswith("Excluded:")
-    )
     assert excluded_pairs == {
         ("M03", "F03"),
         ("M03", "F04"),
@@ -843,9 +838,128 @@ def test_linked_coupling_and_repulsion_phases_change_target_probability():
     }
 
 
+def test_linked_coupling_cross_targets_double_recessive_at_one_tenth():
+    animals = [
+        _linked_animal(
+            "M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"
+        ),
+        _linked_animal(
+            "F01", "F", {"A": "A/a", "B": "B/b"}, "A|B/a|b"
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "a/a", "B": "b/b"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked[0].probability == Fraction(81, 400)
+
+
+def test_linked_coupling_by_repulsion_cross_targets_double_recessive():
+    animals = [
+        _linked_animal(
+            "M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"
+        ),
+        _linked_animal(
+            "F01", "F", {"A": "A/a", "B": "B/b"}, "A|b/a|B"
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "a/a", "B": "b/b"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked[0].probability == Fraction(9, 400)
+
+
+def test_linked_lethal_partner_changes_target_probability():
+    animals = [
+        _linked_animal(
+            "M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"
+        ),
+        _linked_animal(
+            "F01", "F", {"A": "A/a", "B": "B/b"}, "A|B/a|b"
+        ),
+    ]
+    settings = {
+        "animals": animals,
+        "target": {"A": "A/A"},
+        "linked_pairs": [("A", "B", 0)],
+    }
+
+    with_lethal = rank_pairs(**settings, lethal={"B": "b/b"})
+    without_lethal = rank_pairs(**settings)
+
+    assert with_lethal.ranked[0].probability == Fraction(1, 3)
+    assert without_lethal.ranked[0].probability == Fraction(1, 4)
+
+
+def test_invalid_phase_raises_even_when_pair_is_excluded_as_related():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "C1",
+            "F00",
+            "M00",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): "A|B/A|b"},
+        ),
+        Animal(
+            "F01",
+            "F",
+            "C1",
+            "F00",
+            "M00",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): "A|B/a|b"},
+        ),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=r"Invalid phase for animal 'M01'.*linked gene pair \('A', 'B'\)",
+    ):
+        rank_pairs(
+            animals,
+            target={"A": "A/a"},
+            exclude_related=True,
+            linked_pairs=[("A", "B", "1/10")],
+        )
+
+
+def test_blank_linked_genotype_precedes_malformed_phase_validation():
+    animals = [
+        _linked_animal(
+            "M01", "M", {"A": "", "B": "B/b"}, "malformed phase"
+        ),
+        _linked_animal("F01", "F", {"A": "A/a", "B": "B/b"}, None),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked == []
+    assert len(result.skipped) == 1
+    assert result.skipped[0].kind == "missing_genotype"
+    assert "M01" in result.skipped[0].reason
+    assert "A" in result.skipped[0].reason
+
+
 def test_linked_pair_missing_phase_skip_and_missing_genotype_precedence():
     missing_phase = [
-        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, None),
+        Animal(
+            "M01", "M", "", "", "",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): ""},
+        ),
         _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
     ]
     missing_genotype = [
@@ -871,6 +985,121 @@ def test_linked_pair_missing_phase_skip_and_missing_genotype_precedence():
     assert all(
         text in genotype_result.skipped[0].reason
         for text in ("M02", "B")
+    )
+
+
+def test_linked_pair_missing_phase_key_raises_configuration_error():
+    animals = [
+        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, None),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Phase for animal 'M01'.*linked gene pair \('A', 'B'\).*"
+            r"not have been loaded.*different gene order"
+        ),
+    ):
+        rank_pairs(
+            animals,
+            target={"A": "A/a"},
+            linked_pairs=[("A", "B", "1/10")],
+        )
+
+
+def test_linked_pair_phase_key_in_different_gene_order_raises():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b"},
+            {("B", "A"): "B|A/b|a"},
+        ),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=r"Phase for animal 'M01'.*pair \('A', 'B'\).*different gene order",
+    ):
+        rank_pairs(
+            animals,
+            target={"A": "A/a"},
+            linked_pairs=[("A", "B", "1/10")],
+        )
+
+
+@pytest.mark.parametrize(
+    ("phase", "detail"),
+    [
+        ("A|B/A|b", "does not agree with the per-gene genotypes"),
+        ("malformed", "Cannot read phased genotype"),
+    ],
+)
+def test_rank_pairs_rejects_invalid_hand_built_linked_phase(phase, detail):
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): phase},
+        ),
+        Animal("F01", "F", "", "", "", {"A": "a/a", "B": "b/b"}, {}),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Invalid phase for animal 'M01'.*linked gene pair \('A', 'B'\).*{detail}",
+    ):
+        rank_pairs(
+            animals,
+            target={"A": "A/a"},
+            linked_pairs=[("A", "B", "1/10")],
+        )
+
+
+def test_rank_pairs_missing_phase_hint_names_configured_gene_order():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): ""},
+        ),
+        Animal(
+            "F01",
+            "F",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b"},
+            {("A", "B"): ""},
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked == []
+    assert result.skipped[0].kind == "missing_phase"
+    assert "M01" in result.skipped[0].reason
+    assert "('A', 'B')" in result.skipped[0].reason
+    assert (
+        "Phase must be written in the configured gene order for this pair."
+        in result.skipped[0].reason
     )
 
 

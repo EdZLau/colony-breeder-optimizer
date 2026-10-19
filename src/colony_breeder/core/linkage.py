@@ -5,10 +5,10 @@ or has a lethal list; an untargeted partner's lethal genotypes can change the
 surviving target probability. The pair can be ignored only when neither gene
 is targeted and neither has lethals.
 
-This module assumes equal recombination in males and females, no crossover
-interference, and a recombination frequency supplied by the user. Ten map
-units are represented as r = 1/10. X-linked genes are not handled here and
-remain unlinked from one another (r = 1/2) in this step.
+This module assumes equal recombination in males and females and a
+recombination frequency supplied by the user. Ten map units are represented
+as r = 1/10. X-linked genes are not handled here and remain unlinked from one
+another (r = 1/2) in this step.
 """
 from fractions import Fraction
 from typing import Dict, Iterable, List, Optional, Tuple, Union
