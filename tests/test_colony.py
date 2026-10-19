@@ -121,6 +121,113 @@ def test_load_colony_rejects_invalid_or_blank_sex(tmp_path):
         load_colony(str(blank_path), gene_columns=["Cre"])
 
 
+@pytest.mark.parametrize("sex_value", ["", " ? "])
+def test_unusable_sex_keeps_well_formed_x_linked_genotype_raw(tmp_path, sex_value):
+    csv_path = tmp_path / "unusable_x_linked_sex.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        f"M01,{sex_value},C1,,, a/y \n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["Xgene"],
+        x_linked_genes=["Xgene"],
+    )
+
+    assert len(colony) == 1
+    assert colony[0].sex == sex_value.strip().upper()
+    assert colony[0].genotypes["Xgene"] == "a/y"
+
+
+@pytest.mark.parametrize("genotype", ["xyz", "A/B/C"])
+def test_unusable_sex_still_rejects_malformed_x_linked_genotype(
+    tmp_path, genotype
+):
+    csv_path = tmp_path / "malformed_x_linked_genotype.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        f"M02,,C1,,,{genotype}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Invalid genotype for animal 'M02' in column 'Xgene'.*{genotype!r}",
+    ):
+        load_colony(
+            csv_path,
+            gene_columns=["Xgene"],
+            x_linked_genes=["Xgene"],
+        )
+
+
+@pytest.mark.parametrize("sex_value", ["F", "M", ""])
+def test_blank_x_linked_genotype_loads_for_any_sex(tmp_path, sex_value):
+    csv_path = tmp_path / "blank_x_linked_genotype.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        f"M03,{sex_value},C1,,, \n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["Xgene"],
+        x_linked_genes=["Xgene"],
+    )
+
+    assert len(colony) == 1
+    assert colony[0].genotypes["Xgene"] == ""
+
+
+def test_load_colony_validates_and_normalizes_x_linked_genotypes(tmp_path):
+    csv_path = tmp_path / "x_linked_genotypes.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        "F01,f,C1,,,A/a\n"
+        "M01,m,C2,,,a/y\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["Xgene"],
+        x_linked_genes=["Xgene"],
+    )
+
+    assert [(animal.animal_id, animal.sex, animal.genotypes["Xgene"]) for animal in colony] == [
+        ("F01", "F", "A/a"),
+        ("M01", "M", "a/Y"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("animal_id", "sex", "genotype"),
+    [
+        ("M01", "M", "A/a"),
+        ("F01", "F", "A/Y"),
+    ],
+)
+def test_load_colony_x_linked_genotype_errors_name_animal_and_gene(
+    tmp_path, animal_id, sex, genotype
+):
+    csv_path = tmp_path / "invalid_x_linked_genotype.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        f"{animal_id},{sex},C1,,,{genotype}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=rf"Invalid genotype for animal '{animal_id}'.*'Xgene'"):
+        load_colony(
+            csv_path,
+            gene_columns=["Xgene"],
+            x_linked_genes=["Xgene"],
+        )
+
+
 def test_load_colony_normalises_sex_and_trims_whitespace_in_ids_and_genotypes(tmp_path):
     csv_path = tmp_path / "normalise.csv"
     csv_path.write_text(

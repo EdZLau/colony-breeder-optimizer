@@ -5,7 +5,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-from colony_breeder.core.genetics import parse_genotype
+from colony_breeder.core.genetics import (
+    format_x_linked_genotype,
+    parse_genotype,
+    parse_x_linked_genotype,
+)
 
 DEFAULT_COLUMN_MAPPING = {
     "animal_id": "animal_id",
@@ -55,14 +59,24 @@ def load_colony(
     csv_path: Union[str, Path],
     column_mapping: Optional[Mapping[str, str]] = None,
     gene_columns: Optional[Sequence[str]] = None,
+    x_linked_genes: Optional[Sequence[str]] = None,
 ) -> List[Animal]:
     """Load a colony CSV and validate animal IDs, sex values, and genotype strings.
 
     The default column mapping matches the sample data in this project:
     animal_id, sex, cage, mother_id, father_id.
+    Sex is normalized by trimming whitespace and uppercasing; only "M" and
+    "F" are usable for validating an X-linked genotype.
     """
     resolved_mapping = _normalise_mapping(column_mapping)
     gene_names = _validate_gene_columns(gene_columns)
+    x_linked_gene_names = set(_validate_gene_columns(x_linked_genes or []))
+    unknown_x_linked_genes = x_linked_gene_names.difference(gene_names)
+    if unknown_x_linked_genes:
+        raise ValueError(
+            "X-linked gene name(s) must also be included in gene_columns: "
+            + ", ".join(sorted(unknown_x_linked_genes))
+        )
     csv_path = Path(csv_path)
 
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
@@ -116,8 +130,10 @@ def load_colony(
 
             sex_value = (row.get(resolved_mapping["sex"], "") or "").strip()
             sex = sex_value.upper()
-            if sex not in {"M", "F"}:
-                raise ValueError(f"Invalid sex value {sex_value!r} for animal {raw_id!r}. Expected 'M' or 'F'.")
+            if sex not in {"M", "F"} and not x_linked_gene_names:
+                raise ValueError(
+                    f"Invalid sex value {sex_value!r} for animal {raw_id!r}. Expected 'M' or 'F'."
+                )
 
             cage = (row.get(resolved_mapping["cage"], "") or "").strip()
             mother_id = (row.get(resolved_mapping["mother_id"], "") or "").strip()
@@ -131,7 +147,20 @@ def load_colony(
                 cleaned = raw_value.strip()
                 if cleaned:
                     try:
-                        parse_genotype(cleaned)
+                        if gene_name in x_linked_gene_names:
+                            if sex in {"M", "F"}:
+                                parsed = parse_x_linked_genotype(cleaned, sex)
+                                cleaned = format_x_linked_genotype(parsed)
+                            else:
+                                parts = [part.strip() for part in cleaned.split("/")]
+                                if len(parts) != 2 or not all(parts):
+                                    raise ValueError(
+                                        f"Cannot read X-linked genotype {cleaned!r}: "
+                                        "expected slash style with two non-empty parts, "
+                                        "like 'A/a' or 'A/Y'."
+                                    )
+                        else:
+                            parse_genotype(cleaned)
                     except ValueError as exc:
                         raise ValueError(
                             f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: "
