@@ -1,4 +1,5 @@
 import codecs
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -377,6 +378,182 @@ def test_load_colony_accepts_bom_prefixed_files(tmp_path):
     colony = load_colony(str(csv_path), gene_columns=["Cre"])
     assert len(colony) == 1
     assert colony[0].animal_id == "M01"
+
+
+def test_load_colony_stores_coupling_and_repulsion_phases(tmp_path):
+    csv_path = tmp_path / "linked_phases.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,AB_phase\n"
+        "M01,M,C1,,,A/a,B/b,A|B/a|b\n"
+        "F01,F,C2,,,A/a,B/b,A|b/a|B\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["A", "B"],
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+    )
+
+    assert colony[0].phases == {("A", "B"): "A|B/a|b"}
+    assert colony[1].phases == {("A", "B"): "A|b/a|B"}
+
+
+def test_load_colony_keeps_blank_linked_phase_as_blank(tmp_path):
+    csv_path = tmp_path / "blank_linked_phase.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,AB_phase\n"
+        "M01,M,C1,,,A/a,B/b, \n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["A", "B"],
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+    )
+
+    assert colony[0].phases[("A", "B")] == ""
+
+
+def test_load_colony_defers_phase_validation_when_gene_genotype_is_blank(tmp_path):
+    csv_path = tmp_path / "phase_with_missing_genotype.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,AB_phase\n"
+        "M01,M,C1,,,A/a,,not a phase\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["A", "B"],
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+    )
+
+    assert colony[0].phases[("A", "B")] == "not a phase"
+
+
+@pytest.mark.parametrize(
+    ("phase", "message"),
+    [
+        ("A|B/A", "each chromosome must have two non-empty alleles"),
+        ("A|B/A|B", "does not agree with the per-gene genotypes"),
+    ],
+)
+def test_load_colony_rejects_malformed_or_mismatched_phase_with_animal_and_pair(
+    tmp_path, phase, message
+):
+    csv_path = tmp_path / "invalid_linked_phase.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,AB_phase\n"
+        f"M01,M,C1,,,A/a,B/b,{phase}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Invalid phase for animal 'M01' in gene pair \('A', 'B'\).*{message}",
+    ):
+        load_colony(
+            csv_path,
+            gene_columns=["A", "B"],
+            linked_pairs=[("A", "B", "1/10", "AB_phase")],
+        )
+
+
+def test_load_colony_uses_configured_gene_order_for_phase_text(tmp_path):
+    csv_path = tmp_path / "reversed_linked_pair.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,BA_phase\n"
+        "M01,M,C1,,,A/a,B/b,B|A/b|a\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(
+        csv_path,
+        gene_columns=["A", "B"],
+        linked_pairs=[("B", "A", "1/10", "BA_phase")],
+    )
+
+    assert colony[0].phases == {("B", "A"): "B|A/b|a"}
+
+
+@pytest.mark.parametrize(
+    ("linked_pairs", "x_linked_genes", "message"),
+    [
+        ([("A", "A", "1/10", "Phase")], [], "same gene twice"),
+        (
+            [("A", "B", "1/10", "AB"), ("B", "A", "1/10", "BA")],
+            [],
+            "more than one linked pair.*B",
+        ),
+        ([("A", "B", "1/10", "Phase")], ["B"], "X-linked gene"),
+        ([("A", "Unknown", "1/10", "Phase")], [], "not in gene_columns.*Unknown"),
+    ],
+)
+def test_load_colony_rejects_invalid_linked_pair_gene_configuration(
+    tmp_path, linked_pairs, x_linked_genes, message
+):
+    csv_path = tmp_path / "linked_config.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,Phase,AB,BA\n"
+        "M01,M,C1,,,A/a,B/b,,,,\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        load_colony(
+            csv_path,
+            gene_columns=["A", "B"],
+            x_linked_genes=x_linked_genes,
+            linked_pairs=linked_pairs,
+        )
+
+
+@pytest.mark.parametrize("recombination_frequency", ["3/4", 1, 0.1, True])
+def test_load_colony_rejects_invalid_linked_recombination_frequency(
+    tmp_path, recombination_frequency
+):
+    csv_path = tmp_path / "invalid_recombination.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,Phase\n"
+        "M01,M,C1,,,A/a,B/b,A|B/a|b\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Invalid recombination frequency.*linked pair"):
+        load_colony(
+            csv_path,
+            gene_columns=["A", "B"],
+            linked_pairs=[
+                ("A", "B", recombination_frequency, "Phase")
+            ],
+        )
+
+
+def test_load_colony_reports_missing_linked_phase_column_and_available_columns(tmp_path):
+    csv_path = tmp_path / "missing_phase_column.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B\n"
+        "M01,M,C1,,,A/a,B/b\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"phase column.*Phase.*Available columns:.*A, B",
+    ):
+        load_colony(
+            csv_path,
+            gene_columns=["A", "B"],
+            linked_pairs=[("A", "B", Fraction(1, 10), "Phase")],
+        )
+
+
+def test_load_colony_without_linked_pairs_leaves_phase_mapping_empty():
+    colony = load_colony(SAMPLE, gene_columns=["Cre", "Ob", "Agouti"])
+
+    assert all(animal.phases == {} for animal in colony)
 
 
 def test_pedigree_warnings_detects_animal_listed_as_own_parent(tmp_path):

@@ -10,6 +10,12 @@ from colony_breeder.core.genetics import (
     parse_genotype,
     parse_x_linked_genotype,
 )
+from colony_breeder.core.linkage import (
+    RecombinationInput,
+    linked_offspring_distribution,
+    parse_phased_genotype,
+    validate_phase_matches_genotypes,
+)
 
 DEFAULT_COLUMN_MAPPING = {
     "animal_id": "animal_id",
@@ -30,6 +36,7 @@ class Animal:
     mother_id: str
     father_id: str
     genotypes: Dict[str, str] = field(default_factory=dict)
+    phases: Dict[Tuple[str, str], str] = field(default_factory=dict)
 
 
 def _normalise_mapping(column_mapping: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
@@ -60,6 +67,9 @@ def load_colony(
     column_mapping: Optional[Mapping[str, str]] = None,
     gene_columns: Optional[Sequence[str]] = None,
     x_linked_genes: Optional[Sequence[str]] = None,
+    linked_pairs: Optional[
+        Sequence[Tuple[str, str, RecombinationInput, str]]
+    ] = None,
 ) -> List[Animal]:
     """Load a colony CSV and validate animal IDs, sex values, and genotype strings.
 
@@ -67,6 +77,9 @@ def load_colony(
     animal_id, sex, cage, mother_id, father_id.
     Sex is normalized by trimming whitespace and uppercasing; only "M" and
     "F" are usable for validating an X-linked genotype.
+    Each linked pair is configured as (gene1, gene2, recombination frequency,
+    phase column). Phase text follows that gene order, for example a pair
+    configured as ("B", "A", ...) uses "B|A/b|a".
     """
     resolved_mapping = _normalise_mapping(column_mapping)
     gene_names = _validate_gene_columns(gene_columns)
@@ -77,6 +90,11 @@ def load_colony(
             "X-linked gene name(s) must also be included in gene_columns: "
             + ", ".join(sorted(unknown_x_linked_genes))
         )
+    normalized_linked_pairs = _validate_linked_pairs(
+        linked_pairs or (),
+        gene_names,
+        x_linked_gene_names,
+    )
     csv_path = Path(csv_path)
 
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
@@ -102,6 +120,19 @@ def load_colony(
             raise ValueError(
                 "Requested gene column(s) missing from the CSV: "
                 + ", ".join(missing_gene_columns)
+                + ". Available columns: "
+                + ", ".join(reader.fieldnames)
+            )
+
+        missing_phase_columns = [
+            phase_column
+            for _, _, _, phase_column in normalized_linked_pairs
+            if phase_column not in reader.fieldnames
+        ]
+        if missing_phase_columns:
+            raise ValueError(
+                "Linked-pair phase column(s) missing from the CSV: "
+                + ", ".join(dict.fromkeys(missing_phase_columns))
                 + ". Available columns: "
                 + ", ".join(reader.fieldnames)
             )
@@ -168,6 +199,25 @@ def load_colony(
                         ) from exc
                 genotypes[gene_name] = cleaned
 
+            phases: Dict[Tuple[str, str], str] = {}
+            for gene1, gene2, _, phase_column in normalized_linked_pairs:
+                raw_phase = row.get(phase_column, "")
+                phase = (raw_phase or "").strip()
+                if phase and genotypes[gene1] and genotypes[gene2]:
+                    try:
+                        parse_phased_genotype(phase)
+                        validate_phase_matches_genotypes(
+                            phase,
+                            genotypes[gene1],
+                            genotypes[gene2],
+                        )
+                    except ValueError as exc:
+                        raise ValueError(
+                            f"Invalid phase for animal {raw_id!r} in gene pair "
+                            f"({gene1!r}, {gene2!r}): {phase!r}. {exc}"
+                        ) from exc
+                phases[(gene1, gene2)] = phase
+
             animals.append(
                 Animal(
                     animal_id=raw_id,
@@ -176,10 +226,76 @@ def load_colony(
                     mother_id=mother_id,
                     father_id=father_id,
                     genotypes=genotypes,
+                    phases=phases,
                 )
             )
 
     return animals
+
+
+def _validate_linked_pairs(
+    linked_pairs: Sequence[Tuple[str, str, RecombinationInput, str]],
+    gene_names: Sequence[str],
+    x_linked_gene_names: set,
+) -> List[Tuple[str, str, RecombinationInput, str]]:
+    """Validate linked-pair settings and normalize their names."""
+    normalized = []
+    linked_genes = set()
+    known_genes = set(gene_names)
+    for pair in linked_pairs:
+        try:
+            gene1, gene2, recombination_frequency, phase_column = pair
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "Each linked pair must contain gene1, gene2, recombination "
+                "frequency, and phase column."
+            ) from exc
+
+        gene1 = str(gene1).strip()
+        gene2 = str(gene2).strip()
+        phase_column = str(phase_column).strip()
+        pair_label = f"({gene1!r}, {gene2!r})"
+        if not gene1 or not gene2:
+            raise ValueError(f"Linked pair {pair_label} must name two genes.")
+        if gene1 == gene2:
+            raise ValueError(
+                f"Linked pair {pair_label} cannot contain the same gene twice."
+            )
+        if gene1 not in known_genes or gene2 not in known_genes:
+            unknown = sorted({gene1, gene2} - known_genes)
+            raise ValueError(
+                f"Linked pair {pair_label} names gene(s) not in gene_columns: "
+                + ", ".join(unknown)
+            )
+        if gene1 in x_linked_gene_names or gene2 in x_linked_gene_names:
+            raise ValueError(
+                f"Linked pair {pair_label} cannot include an X-linked gene."
+            )
+        duplicated = {gene1, gene2} & linked_genes
+        if duplicated:
+            raise ValueError(
+                "A gene cannot appear in more than one linked pair: "
+                + ", ".join(sorted(duplicated))
+            )
+        if not phase_column:
+            raise ValueError(f"Linked pair {pair_label} needs a phase column.")
+
+        try:
+            linked_offspring_distribution(
+                "A|B/A|B",
+                "A|B/A|B",
+                recombination_frequency,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid recombination frequency for linked pair {pair_label}: {exc}"
+            ) from exc
+
+        normalized.append(
+            (gene1, gene2, recombination_frequency, phase_column)
+        )
+        linked_genes.update((gene1, gene2))
+    return normalized
 
 
 def pedigree_warnings(colony: Sequence[Animal]) -> List[Tuple[str, str]]:
