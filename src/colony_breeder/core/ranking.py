@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from colony_breeder.core.colony import Animal
 from colony_breeder.core.genetics import (
@@ -19,6 +19,7 @@ class RankedPair:
     male: Animal
     female: Animal
     probability: Fraction
+    per_gene: Dict[str, Fraction]
 
 
 @dataclass(frozen=True)
@@ -50,11 +51,14 @@ def rank_pairs(
     target: Mapping[str, Union[str, Iterable[str]]],
     lethal: Optional[Mapping[str, Union[str, Iterable[str]]]] = None,
 ) -> PairRankingResult:
-    """Rank pairs for one target gene, preserving unknown data as skipped pairs.
+    """Rank pairs by the probability of producing all targeted genotypes.
 
-    ``target`` and ``lethal`` are keyed by gene name to support the planned
-    multi-gene interface, while this step evaluates exactly one target gene.
+    Target genes are assumed to be unlinked, so their exact per-gene
+    probabilities are multiplied. A lethal list applies only to its gene.
     """
+    if not target:
+        raise ValueError("target must contain at least one gene.")
+
     colony_genes = {gene for animal in animals for gene in animal.genotypes}
     target_genes = set(target)
     lethal_by_gene = lethal or {}
@@ -66,66 +70,84 @@ def rank_pairs(
             + ", ".join(sorted(unknown_genes))
         )
 
-    if len(target) != 1:
-        raise ValueError("target must contain exactly one gene for single-gene ranking.")
+    targets = {}
+    for gene, genotypes in target.items():
+        if not gene.strip():
+            raise ValueError("target gene name cannot be blank.")
+        validated = _validate_genotypes(genotypes)
+        if not validated:
+            raise ValueError(f"target genotype list for gene {gene!r} cannot be empty.")
+        targets[gene] = validated
 
-    gene, target_genotypes = next(iter(target.items()))
-    if not gene.strip():
-        raise ValueError("target gene name cannot be blank.")
-
-    target_genotypes = _validate_genotypes(target_genotypes)
-    unsupported_lethal_genes = lethal_genes - {gene}
-    if unsupported_lethal_genes:
-        raise ValueError(
-            "Single-gene ranking only supports lethal genotypes for the target gene "
-            f"{gene!r}; got {sorted(unsupported_lethal_genes)!r}."
-        )
-
-    lethal_genotypes = lethal_by_gene.get(gene, ())
-    lethal_genotypes = _validate_genotypes(lethal_genotypes)
+    lethals = {
+        gene: _validate_genotypes(genotypes)
+        for gene, genotypes in lethal_by_gene.items()
+    }
     ranked: List[RankedPair] = []
     skipped: List[SkippedPair] = []
 
     for male, female in generate_pairs(animals):
-        missing = []
-        if not male.genotypes.get(gene, "").strip():
-            missing.append(f"male {male.animal_id}")
-        if not female.genotypes.get(gene, "").strip():
-            missing.append(f"female {female.animal_id}")
-        if missing:
+        missing_by_gene = {}
+        for gene in targets:
+            missing = []
+            if not male.genotypes.get(gene, "").strip():
+                missing.append(f"male {male.animal_id}")
+            if not female.genotypes.get(gene, "").strip():
+                missing.append(f"female {female.animal_id}")
+            if missing:
+                missing_by_gene[gene] = missing
+
+        if missing_by_gene:
+            missing_details = [
+                f"gene {gene!r} in " + " and ".join(missing)
+                for gene, missing in missing_by_gene.items()
+            ]
             skipped.append(
                 SkippedPair(
                     male=male,
                     female=female,
                     reason=(
-                        f"Missing genotype for gene {gene!r} in "
-                        + " and ".join(missing)
+                        "Missing genotype for "
+                        + "; ".join(missing_details)
                         + "."
                     ),
                 )
             )
             continue
 
-        try:
-            probability = probability_of_target(
-                male.genotypes[gene],
-                female.genotypes[gene],
-                target_genotypes,
-                lethal=lethal_genotypes,
-            )
-        except AllOffspringLethalError:
-            skipped.append(
-                SkippedPair(
+        per_gene = {}
+        for gene, target_genotypes in targets.items():
+            try:
+                per_gene[gene] = probability_of_target(
+                    male.genotypes[gene],
+                    female.genotypes[gene],
+                    target_genotypes,
+                    lethal=lethals.get(gene, []),
+                )
+            except AllOffspringLethalError:
+                skipped.append(
+                    SkippedPair(
+                        male=male,
+                        female=female,
+                        reason=(
+                            f"All offspring are lethal for gene {gene!r} from "
+                            f"male {male.animal_id} and female {female.animal_id}."
+                        ),
+                    )
+                )
+                break
+        else:
+            probability = Fraction(1)
+            for gene_probability in per_gene.values():
+                probability *= gene_probability
+            ranked.append(
+                RankedPair(
                     male=male,
                     female=female,
-                    reason=(
-                        f"All offspring are lethal for gene {gene!r} from "
-                        f"male {male.animal_id} and female {female.animal_id}."
-                    ),
+                    probability=probability,
+                    per_gene=per_gene,
                 )
             )
-            continue
-        ranked.append(RankedPair(male=male, female=female, probability=probability))
 
     ranked.sort(
         key=lambda pair: (
@@ -139,14 +161,9 @@ def rank_pairs(
 
 def _validate_genotypes(
     genotypes: Union[str, Iterable[str]],
-) -> Union[str, List[str]]:
+) -> List[str]:
     """Raise before ranking if a target or lethal genotype is malformed."""
-    if isinstance(genotypes, str):
-        values = [genotypes]
-        normalized: Union[str, List[str]] = genotypes
-    else:
-        values = list(genotypes)
-        normalized = values
+    values = [genotypes] if isinstance(genotypes, str) else list(genotypes)
     for genotype in values:
         parse_genotype(genotype)
-    return normalized
+    return values

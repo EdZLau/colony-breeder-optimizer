@@ -63,3 +63,8 @@ SWE internships. I want to understand everything.
 - Layout: src/colony_breeder/core/ (genetics), tests/, data/sample_mice.csv (fake data)
 - Real lab data must never be committed (see .gitignore).
 - Always run tests with: .venv\Scripts\python -m pytest   (the assistant's terminal does not auto-activate the venv)
+   ## Decisions made in step 3c
+   - rank_pairs multiplies per-gene probabilities (Fractions). ASSUMES target genes are unlinked; linked genes are step 6.
+   - RankedPair.per_gene holds each gene's probability. A lethal list applies only to its own gene; a lethal entry for an untargeted gene is validated but ignored.
+   - A blank genotype in ANY targeted gene skips the pair; blanks in untargeted genes do not.
+   - Performance idea for later: cache probability by (gene, male genotype, female genotype).
