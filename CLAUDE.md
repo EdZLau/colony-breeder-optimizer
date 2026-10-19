@@ -41,10 +41,17 @@ SWE internships. I want to understand everything.
    (HB/hb vs Hb/hB), parental gametes (1-r)/2, recombinant gametes r/2,
    tests vs known values (10 map units = 10% recombinant)
    (DONE)
-7. Streamlit app: upload .xlsx/.csv without reformatting; dropdowns to map ID, sex,
-   cage, mother, father, each gene; per-gene settings table for symbol meanings and
-   target genotypes; lethal/sibling/linkage options; downloadable ranked table; note
-   that uploaded data is not stored; Google Sheets via download or published link
+7. Streamlit app:
+   - 7a: Read CSV/XLSX uploads into validated text rows (DONE).
+      - 7a-i: `load_colony_rows` supports uploaded rows and source row offsets (DONE).
+   - 7b: Build upload UI for sheet/header selection and map ID, sex, cage, parent,
+     and gene columns. <-- NEXT
+   - 7c: Add target, lethal, relatedness, and linkage settings and run core ranking.
+   - 7d: Show ranked results and warnings; provide a downloadable table and a
+     clear note that uploaded data is not stored.
+   - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
+     via download or published link.
+   - Latest full-suite result after 7a: 329 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient

@@ -17,7 +17,7 @@ colony-breeder = "colony_breeder.cli:main"
 [project.optional-dependencies]
 dev = ["pytest>=7"]
 # Only the web app (step 7) needs these. The core never imports them.
-app = ["streamlit", "pandas", "openpyxl"]
+app = ["streamlit", "pandas", "openpyxl", "defusedxml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -119,6 +119,7 @@ def load_colony_rows(
         Sequence[Tuple[str, str, RecombinationInput, str]]
     ] = None,
     source_name: str = "uploaded data",
+    first_data_row: int = 2,
 ) -> List[Animal]:
     """Validate and load colony rows using their CSV-style field names."""
     if fieldnames is None:
@@ -190,7 +191,7 @@ def load_colony_rows(
     animals: List[Animal] = []
     seen_ids = set()
 
-    for row_index, row in enumerate(rows, start=2):
+    for row_index, row in enumerate(rows, start=first_data_row):
         for column_name, value in row.items():
             if column_name is None:
                 extra_values = value if isinstance(value, list) else []

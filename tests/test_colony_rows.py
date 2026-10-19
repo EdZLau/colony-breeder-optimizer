@@ -185,6 +185,27 @@ def test_load_colony_rows_skips_blank_lines_and_starts_data_at_row_two():
         )
 
 
+def test_load_colony_rows_uses_custom_first_data_row_for_validation():
+    rows = [
+        {
+            "animal_id": "",
+            "sex": "F",
+            "cage": "C1",
+            "mother_id": "",
+            "father_id": "",
+            "Cre": "Cre/+",
+        }
+    ]
+
+    with pytest.raises(ValueError, match=r"Row 9 is missing an animal_id"):
+        load_colony_rows(
+            ["animal_id", "sex", "cage", "mother_id", "father_id", "Cre"],
+            rows,
+            gene_columns=["Cre"],
+            first_data_row=9,
+        )
+
+
 def test_load_colony_rows_rejects_unknown_column_mapping_key():
     with pytest.raises(
         ValueError,
