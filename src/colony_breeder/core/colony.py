@@ -287,8 +287,8 @@ def load_colony_rows(
                         parse_genotype(cleaned)
                 except ValueError as exc:
                     raise ValueError(
-                        f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: "
-                        f"{cleaned!r}. {exc}"
+                        f"Row {row_index}: Invalid genotype for animal "
+                        f"{raw_id!r} in column {gene_name!r}: {cleaned!r}. {exc}"
                     ) from exc
             genotypes[gene_name] = cleaned
 
@@ -306,8 +306,8 @@ def load_colony_rows(
                     )
                 except ValueError as exc:
                     raise ValueError(
-                        f"Invalid phase for animal {raw_id!r} in gene pair "
-                        f"({gene1!r}, {gene2!r}): {phase!r}. {exc}"
+                        f"Row {row_index}: Invalid phase for animal {raw_id!r} "
+                        f"in gene pair ({gene1!r}, {gene2!r}): {phase!r}. {exc}"
                     ) from exc
             phases[(gene1, gene2)] = phase
 

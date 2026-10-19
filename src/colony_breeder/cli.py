@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import re
 import sys
 from fractions import Fraction
 from typing import Optional, Sequence, Tuple
@@ -370,10 +371,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 def _is_x_linked_animal_genotype_error(message: str, genes: Sequence[str]) -> bool:
-    if not message.startswith(("Invalid genotype for animal ", "Invalid X-linked genotype for animal ")):
+    row_prefixed_message = re.sub(r"^Row \d+: ", "", message)
+    if not row_prefixed_message.startswith(
+        ("Invalid genotype for animal ", "Invalid X-linked genotype for animal ")
+    ):
         return False
     return any(
-        f"in column {gene!r}" in message or f"in gene {gene!r}" in message
+        f"in column {gene!r}" in row_prefixed_message
+        or f"in gene {gene!r}" in row_prefixed_message
         for gene in genes
     )
 

@@ -206,6 +206,173 @@ def test_load_colony_rows_uses_custom_first_data_row_for_validation():
         )
 
 
+def _row_for_genotype_error(animal_id, genotype):
+    return {
+        "animal_id": animal_id,
+        "sex": "M",
+        "cage": "C1",
+        "mother_id": "",
+        "father_id": "",
+        "Cre": genotype,
+    }
+
+
+def _row_for_phase_error(animal_id, phase):
+    return {
+        "animal_id": animal_id,
+        "sex": "M",
+        "cage": "C1",
+        "mother_id": "",
+        "father_id": "",
+        "A": "A/a",
+        "B": "B/b",
+        "AB_phase": phase,
+    }
+
+
+def test_malformed_genotype_error_uses_non_first_header_source_row():
+    with pytest.raises(
+        ValueError,
+        match=r"^Row 4: Invalid genotype for animal 'M01' in column 'Cre': 'Cre\+'\.",
+    ):
+        load_colony_rows(
+            ["animal_id", "sex", "cage", "mother_id", "father_id", "Cre"],
+            [_row_for_genotype_error("M01", "Cre+")],
+            gene_columns=["Cre"],
+            first_data_row=4,
+        )
+
+
+def test_malformed_genotype_error_counts_an_interior_blank_row():
+    rows = [
+        _row_for_genotype_error("M00", "Cre/+"),
+        {
+            "animal_id": "",
+            "sex": "",
+            "cage": "",
+            "mother_id": "",
+            "father_id": "",
+            "Cre": "",
+        },
+        _row_for_genotype_error("M01", "Cre+"),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=r"^Row 4: Invalid genotype for animal 'M01' in column 'Cre': 'Cre\+'\.",
+    ):
+        load_colony_rows(
+            ["animal_id", "sex", "cage", "mother_id", "father_id", "Cre"],
+            rows,
+            gene_columns=["Cre"],
+            first_data_row=2,
+        )
+
+
+def test_malformed_genotype_error_uses_plain_csv_source_row(tmp_path):
+    csv_path = tmp_path / "malformed_genotype.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre+\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^Row 2: Invalid genotype for animal 'M01' in column 'Cre': 'Cre\+'\.",
+    ):
+        load_colony(csv_path, gene_columns=["Cre"])
+
+
+def test_malformed_phase_error_uses_non_first_header_source_row():
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^Row 4: Invalid phase for animal 'M01' in gene pair \('A', 'B'\): "
+            r"'bad phase'\."
+        ),
+    ):
+        load_colony_rows(
+            [
+                "animal_id",
+                "sex",
+                "cage",
+                "mother_id",
+                "father_id",
+                "A",
+                "B",
+                "AB_phase",
+            ],
+            [_row_for_phase_error("M01", "bad phase")],
+            gene_columns=["A", "B"],
+            linked_pairs=[("A", "B", "1/10", "AB_phase")],
+            first_data_row=4,
+        )
+
+
+def test_malformed_phase_error_counts_an_interior_blank_row():
+    rows = [
+        _row_for_phase_error("M00", "A|B/a|b"),
+        {
+            "animal_id": "",
+            "sex": "",
+            "cage": "",
+            "mother_id": "",
+            "father_id": "",
+            "A": "",
+            "B": "",
+            "AB_phase": "",
+        },
+        _row_for_phase_error("M01", "bad phase"),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^Row 4: Invalid phase for animal 'M01' in gene pair \('A', 'B'\): "
+            r"'bad phase'\."
+        ),
+    ):
+        load_colony_rows(
+            [
+                "animal_id",
+                "sex",
+                "cage",
+                "mother_id",
+                "father_id",
+                "A",
+                "B",
+                "AB_phase",
+            ],
+            rows,
+            gene_columns=["A", "B"],
+            linked_pairs=[("A", "B", "1/10", "AB_phase")],
+            first_data_row=2,
+        )
+
+
+def test_malformed_phase_error_uses_plain_csv_source_row(tmp_path):
+    csv_path = tmp_path / "malformed_phase.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,AB_phase\n"
+        "M01,M,C1,,,A/a,B/b,bad phase\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^Row 2: Invalid phase for animal 'M01' in gene pair \('A', 'B'\): "
+            r"'bad phase'\."
+        ),
+    ):
+        load_colony(
+            csv_path,
+            gene_columns=["A", "B"],
+            linked_pairs=[("A", "B", "1/10", "AB_phase")],
+        )
+
+
 def test_load_colony_rows_allows_unknown_sex_when_requested():
     colony = load_colony_rows(
         ["animal_id", "sex", "cage", "mother_id", "father_id"],
