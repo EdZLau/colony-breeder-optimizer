@@ -18,6 +18,21 @@ class _UploadValueError(ValueError):
     """An expected upload validation error that should not be rewrapped."""
 
 
+class UploadWarning(str):
+    """A user-facing warning with its source column when one applies."""
+
+    column: Optional[str]
+
+    def __new__(
+        cls,
+        message: str,
+        column: Optional[str] = None,
+    ) -> "UploadWarning":
+        warning = str.__new__(cls, message)
+        warning.column = column
+        return warning
+
+
 class SheetChoiceRequired(ValueError):
     """Raised when a workbook has multiple sheets and none was selected."""
 
@@ -35,7 +50,7 @@ class UploadResult:
 
     fieldnames: List[str]
     rows: List[Dict[Optional[str], object]]
-    warnings: List[str]
+    warnings: List[UploadWarning]
     first_data_row: int
     encoding: Optional[str] = None
     delimiter: Optional[str] = None
@@ -87,8 +102,8 @@ def _read_bytes(file: Union[bytes, bytearray, BinaryIO]) -> bytes:
     return content
 
 
-def _decode_csv(content: bytes) -> Tuple[str, str, List[str]]:
-    warnings: List[str] = []
+def _decode_csv(content: bytes) -> Tuple[str, str, List[UploadWarning]]:
+    warnings: List[UploadWarning] = []
     if content.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
             return content.decode("utf-16"), "utf-16", warnings
@@ -103,7 +118,7 @@ def _decode_csv(content: bytes) -> Tuple[str, str, List[str]]:
             raise ValueError(
                 "CSV is neither valid UTF-8 nor cp1252 text."
             ) from exc
-        warnings.append("CSV was not UTF-8; decoded using cp1252.")
+        warnings.append(UploadWarning("CSV was not UTF-8; decoded using cp1252."))
         return text, "cp1252", warnings
 
 
@@ -335,7 +350,7 @@ def _read_xlsx(
         pending_blank_rows = 0
         date_counts: Dict[str, List[int]] = {}
         boolean_counts: Dict[str, List[int]] = {}
-        warnings = []
+        warnings: List[UploadWarning] = []
 
         for worksheet_row, values in enumerate(
             worksheet_rows, start=header_row + 1
@@ -347,10 +362,10 @@ def _read_xlsx(
             if not any(not _is_empty(value) for value in record):
                 pending_blank_rows += 1
                 if pending_blank_rows > ROW_LIMIT:
-                    warnings.append(
+                    warnings.append(UploadWarning(
                         f"Data below worksheet row {worksheet_row} was ignored "
                         f"after {ROW_LIMIT:,} consecutive blank rows."
-                    )
+                    ))
                     break
                 continue
             if len(record) > COLUMN_LIMIT:
@@ -377,15 +392,17 @@ def _read_xlsx(
                     date_counts.setdefault(name, []).append(worksheet_row)
 
         for column, row_numbers in date_counts.items():
-            warnings.append(
+            warnings.append(UploadWarning(
                 f"Column {column!r} contains {len(row_numbers)} date/time-typed "
-                f"cell(s); first on row {row_numbers[0]}. Dates are not repaired."
-            )
+                f"cell(s); first on row {row_numbers[0]}. Dates are not repaired.",
+                column=column,
+            ))
         for column, row_numbers in boolean_counts.items():
-            warnings.append(
+            warnings.append(UploadWarning(
                 f"Column {column!r} contains {len(row_numbers)} boolean cell(s); "
-                f"first on row {row_numbers[0]}. Values are converted to text."
-            )
+                f"first on row {row_numbers[0]}. Values are converted to text.",
+                column=column,
+            ))
 
         return UploadResult(
             fieldnames=fieldnames,

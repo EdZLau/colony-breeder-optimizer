@@ -71,6 +71,7 @@ def test_xlsx_date_warning_is_grouped_once_per_column():
     assert "2 date/time-typed cell(s)" in result.warnings[0]
     assert "first on row 2" in result.warnings[0]
     assert "not repaired" in result.warnings[0]
+    assert result.warnings[0].column == "date"
     assert result.rows[0]["date"].startswith("2020-01-02")
 
 

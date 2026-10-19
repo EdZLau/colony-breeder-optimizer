@@ -206,6 +206,42 @@ def test_load_colony_rows_uses_custom_first_data_row_for_validation():
         )
 
 
+def test_load_colony_rows_allows_unknown_sex_when_requested():
+    colony = load_colony_rows(
+        ["animal_id", "sex", "cage", "mother_id", "father_id"],
+        [
+            {
+                "animal_id": "M01",
+                "sex": "Banana",
+                "cage": "C1",
+                "mother_id": "",
+                "father_id": "",
+            }
+        ],
+        gene_columns=[],
+        allow_unknown_sex=True,
+    )
+
+    assert colony[0].sex == ""
+
+
+def test_load_colony_rows_rejects_unknown_sex_by_default():
+    with pytest.raises(ValueError, match="Invalid sex value 'Banana'"):
+        load_colony_rows(
+            ["animal_id", "sex", "cage", "mother_id", "father_id"],
+            [
+                {
+                    "animal_id": "M01",
+                    "sex": "Banana",
+                    "cage": "C1",
+                    "mother_id": "",
+                    "father_id": "",
+                }
+            ],
+            gene_columns=[],
+        )
+
+
 def test_load_colony_rows_rejects_unknown_column_mapping_key():
     with pytest.raises(
         ValueError,

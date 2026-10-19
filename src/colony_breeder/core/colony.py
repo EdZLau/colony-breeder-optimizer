@@ -120,6 +120,7 @@ def load_colony_rows(
     ] = None,
     source_name: str = "uploaded data",
     first_data_row: int = 2,
+    allow_unknown_sex: bool = False,
 ) -> List[Animal]:
     """Validate and load colony rows using their CSV-style field names."""
     if fieldnames is None:
@@ -249,10 +250,14 @@ def load_colony_rows(
 
         sex_value = (row.get(resolved_mapping["sex"], "") or "").strip()
         sex = sex_value.upper()
-        if sex not in {"M", "F"} and not x_linked_gene_names:
-            raise ValueError(
-                f"Invalid sex value {sex_value!r} for animal {raw_id!r}. Expected 'M' or 'F'."
-            )
+        if sex not in {"M", "F"}:
+            if allow_unknown_sex:
+                sex = ""
+            elif not x_linked_gene_names:
+                raise ValueError(
+                    f"Invalid sex value {sex_value!r} for animal {raw_id!r}. "
+                    "Expected 'M' or 'F'."
+                )
 
         cage = (row.get(resolved_mapping["cage"], "") or "").strip()
         mother_id = (row.get(resolved_mapping["mother_id"], "") or "").strip()
