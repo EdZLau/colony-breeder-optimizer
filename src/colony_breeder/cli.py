@@ -33,6 +33,13 @@ def _positive_integer(value: str) -> int:
     return parsed
 
 
+def _gene_name(value: str) -> str:
+    gene = value.strip()
+    if not gene:
+        raise argparse.ArgumentTypeError("gene name cannot be empty")
+    return gene
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Rank male x female colony pairs by target genotype probability."
@@ -53,6 +60,14 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         metavar="GENE=GENOTYPE",
         help="lethal genotype; repeat as needed",
+    )
+    parser.add_argument(
+        "--xlinked",
+        action="append",
+        type=_gene_name,
+        default=[],
+        metavar="GENE",
+        help="mark a gene as X-linked; repeat as needed",
     )
     parser.add_argument(
         "--top",
@@ -84,7 +99,17 @@ def _ascii(text: str) -> str:
     return text.encode("ascii", "backslashreplace").decode("ascii")
 
 
-def _print_results(result: PairRankingResult, top: Optional[int], show_skipped: bool) -> None:
+def _has_y_sex_chromosome_marker(genotype: str) -> bool:
+    parts = genotype.split("/")
+    return len(parts) == 2 and any(part.strip().lower() == "y" for part in parts)
+
+
+def _print_results(
+    result: PairRankingResult,
+    top: Optional[int],
+    show_skipped: bool,
+    x_linked_targets: Sequence[str] = (),
+) -> None:
     zero_probability_count = sum(pair.probability == 0 for pair in result.ranked)
     nonzero_pairs = [pair for pair in result.ranked if pair.probability != 0]
     visible_pairs = nonzero_pairs
@@ -98,16 +123,34 @@ def _print_results(result: PairRankingResult, top: Optional[int], show_skipped: 
         elif not result.ranked:
             print("No pairs could be evaluated (see skipped pairs below).")
     print("Ranked pairs:")
-    print(
+    header = (
         f"{'Rank':>4}  {'Male':<12}  {'Female':<12}  "
         f"{'Probability (exact)':<20}  {'Decimal':>7}  Flags"
     )
+    if x_linked_targets:
+        header += "  X-linked per_gene"
+    print(header)
     for rank, pair in enumerate(visible_pairs, start=1):
         flags = ",".join(pair.flags) if pair.flags else "-"
-        print(_ascii(
+        row = (
             f"{rank:>4}  {pair.male.animal_id:<12}  {pair.female.animal_id:<12}  "
             f"{str(pair.probability):<20}  {float(pair.probability):>7.4f}  {flags}"
-        ))
+        )
+        if x_linked_targets:
+            per_gene_text = ", ".join(
+                f"{gene}={pair.per_gene[gene]}"
+                for gene in x_linked_targets
+                if gene in pair.per_gene
+            )
+            row += f"  {per_gene_text}"
+        print(_ascii(row))
+    if x_linked_targets:
+        print(
+            "Note: X-linked per-gene probabilities are descriptive marginal "
+            "values among survivors and must not be multiplied. Multiple "
+            "X-linked genes are treated as unlinked (r = 1/2), an approximation "
+            "until step 6."
+        )
     print(f"Showing {len(visible_pairs)} of {len(nonzero_pairs)} pairs with nonzero probability")
     print(f"Hidden zero-probability pairs: {zero_probability_count}")
 
@@ -134,6 +177,16 @@ def _print_results(result: PairRankingResult, top: Optional[int], show_skipped: 
                 f"{pair.male.animal_id} x {pair.female.animal_id}: "
                 f"{pair.reason}"
             ))
+    for note in result.notes:
+        print(_ascii(f"Note: {note}"))
+    if result.excluded_animals:
+        print("Excluded animals:")
+        excluded_to_show = result.excluded_animals[:5]
+        for animal in excluded_to_show:
+            print(_ascii(f"{animal.animal_id}: {animal.reason}"))
+        remaining = len(result.excluded_animals) - len(excluded_to_show)
+        if remaining:
+            print(f"and {remaining} more")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -141,17 +194,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     targets = _settings(args.target)
     lethals = _settings(args.lethal)
-    genes = list(dict.fromkeys([*targets, *lethals]))
-    ignored_lethal_genes = [gene for gene in lethals if gene not in targets]
+    x_linked_genes = list(dict.fromkeys(args.xlinked))
+    genes = list(dict.fromkeys([*targets, *lethals, *x_linked_genes]))
+    ignored_lethal_genes = [
+        gene
+        for gene in lethals
+        if gene not in targets and gene not in x_linked_genes
+    ]
 
     try:
-        colony = load_colony(args.csv_path, gene_columns=genes)
+        colony = load_colony(
+            args.csv_path,
+            gene_columns=genes,
+            x_linked_genes=x_linked_genes,
+        )
+        unmarked_y_genes = [
+            gene
+            for gene in genes
+            if gene not in x_linked_genes
+            and any(
+                _has_y_sex_chromosome_marker(animal.genotypes.get(gene, ""))
+                for animal in colony
+            )
+        ]
         warnings = pedigree_warnings(colony)
         result = rank_pairs(
             colony,
             target=targets,
             lethal=lethals,
             exclude_related=args.exclude_related,
+            x_linked_genes=x_linked_genes,
         )
     except UnicodeDecodeError:
         print(
@@ -160,7 +232,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 1
     except (ValueError, OSError, csv.Error) as exc:
-        print(_ascii(f"Error: {exc}"), file=sys.stderr)
+        message = str(exc)
+        if _is_x_linked_animal_genotype_error(message, x_linked_genes):
+            message += " If this gene is autosomal, remove it from --xlinked."
+        print(_ascii(f"Error: {message}"), file=sys.stderr)
         return 1
 
     for severity, message in warnings:
@@ -170,8 +245,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"Pedigree info messages: {info_count}")
     for gene in ignored_lethal_genes:
         print(_ascii(f"Note: lethal setting for '{gene}' ignored (not a target gene)"))
-    _print_results(result, args.top, args.show_skipped)
+    for gene in unmarked_y_genes:
+        print(
+            _ascii(
+                f"Warning: gene '{gene}' has genotypes like 'A/Y' but is not marked "
+                f"--xlinked. If it is X-linked, add --xlinked {gene}; results for it "
+                "are wrong otherwise."
+            )
+        )
+    x_linked_targets = [gene for gene in targets if gene in x_linked_genes]
+    _print_results(result, args.top, args.show_skipped, x_linked_targets)
     return 0
+
+
+def _is_x_linked_animal_genotype_error(message: str, genes: Sequence[str]) -> bool:
+    if not message.startswith(("Invalid genotype for animal ", "Invalid X-linked genotype for animal ")):
+        return False
+    return any(
+        f"in column {gene!r}" in message or f"in gene {gene!r}" in message
+        for gene in genes
+    )
 
 
 if __name__ == "__main__":

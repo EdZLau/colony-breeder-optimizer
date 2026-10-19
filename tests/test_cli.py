@@ -304,3 +304,221 @@ def test_lethal_only_gene_prints_ignored_setting_note(capsys):
 
     output = capsys.readouterr()
     assert "Note: lethal setting for 'Ob' ignored (not a target gene)" in output.out
+
+
+def test_untargeted_x_linked_lethal_affects_survival_without_ignored_note(
+    tmp_path, capsys
+):
+    csv_path = tmp_path / "xlinked_lethal.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,X1,X2\n"
+        "M01,M,C1,,,A/Y,A/Y\n"
+        "F01,F,C2,,,A/a,A/a\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "X2=a/Y",
+            "--lethal",
+            "X1=a/Y",
+            "--xlinked",
+            "X1",
+            "--xlinked",
+            "X2",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "1/6" in output.out
+    assert "ignored (not a target gene)" not in output.out
+
+
+def test_x_linked_and_autosomal_untargeted_lethals_have_distinct_notes(
+    capsys,
+):
+    assert main(
+        [
+            str(SAMPLE),
+            "--target",
+            "Cre=Cre/Cre",
+            "--lethal",
+            "Ob=ob/ob",
+        ]
+    ) == 0
+    autosomal_output = capsys.readouterr()
+    assert "Note: lethal setting for 'Ob' ignored (not a target gene)" in autosomal_output.out
+
+
+@pytest.mark.parametrize(
+    ("animal_id", "sex", "genotype"),
+    [
+        ("M01", "M", "A/a"),
+        ("F01", "F", "A/Y"),
+    ],
+)
+def test_x_linked_sex_form_error_names_animal_and_gene_and_suggests_option(
+    tmp_path, capsys, animal_id, sex, genotype
+):
+    csv_path = tmp_path / "invalid_xlinked_sex_form.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        f"{animal_id},{sex},C1,,,{genotype}\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "Xgene=A/a",
+            "--xlinked",
+            "Xgene",
+        ]
+    ) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert f"animal '{animal_id}'" in output.err
+    assert "'Xgene'" in output.err
+    assert output.err.rstrip().endswith(
+        "If this gene is autosomal, remove it from --xlinked."
+    )
+
+
+def test_xlinked_cli_joint_probability_and_descriptive_footnote(tmp_path, capsys):
+    csv_path = tmp_path / "two_xlinked_genes.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,X1,X2\n"
+        "M01,M,C1,,,A/Y,A/Y\n"
+        "F01,F,C2,,,A/a,A/a\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "X2=a/Y",
+            "--lethal",
+            "X1=a/Y",
+            "--xlinked",
+            "X1",
+            "--xlinked",
+            "X2",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "1/6" in output.out
+    assert "X-linked per_gene" in output.out
+    assert "X2=1/6" in output.out
+    assert (
+        "Note: X-linked per-gene probabilities are descriptive marginal values "
+        "among survivors and must not be multiplied. Multiple X-linked genes "
+        "are treated as unlinked (r = 1/2), an approximation until step 6."
+    ) in output.out
+
+
+def test_unmarked_xlinked_gene_warning_does_not_change_xlinked_probability(
+    tmp_path, capsys
+):
+    csv_path = tmp_path / "partially_marked_xlinked_genes.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,X1,X2\n"
+        "M01,M,C1,,,A/Y,A/Y\n"
+        "F01,F,C2,,,A/a,A/a\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "X2=a/Y",
+            "--lethal",
+            "X1=a/Y",
+            "--xlinked",
+            "X2",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "Warning: gene 'X1' has genotypes like 'A/Y' but is not marked --xlinked." in output.out
+    assert "If it is X-linked, add --xlinked X1; results for it are wrong otherwise." in output.out
+    assert "1/2" in output.out
+
+
+def test_marked_xlinked_genes_do_not_get_unmarked_warning(tmp_path, capsys):
+    csv_path = tmp_path / "fully_marked_xlinked_genes.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,X1,X2\n"
+        "M01,M,C1,,,A/Y,A/Y\n"
+        "F01,F,C2,,,A/a,A/a\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "X2=a/Y",
+            "--lethal",
+            "X1=a/Y",
+            "--xlinked",
+            "X1",
+            "--xlinked",
+            "X2",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "Warning: gene " not in output.out
+
+
+def test_autosomal_sample_run_has_no_unmarked_xlinked_warning(capsys):
+    assert main([str(SAMPLE), "--target", "Cre=Cre/Cre"]) == 0
+
+    output = capsys.readouterr()
+    assert "Warning: gene " not in output.out
+
+
+def test_cli_prints_excluded_animals_with_five_example_limit(tmp_path, capsys):
+    csv_path = tmp_path / "unknown_sexes.csv"
+    rows = [
+        "animal_id,sex,cage,mother_id,father_id,Cre,X\n",
+        "M01,M,C1,,,Cre/+,A/Y\n",
+        "F01,F,C2,,,+/+,A/a\n",
+    ]
+    rows.extend(f"U{i:02d},?,C{i + 3},,,Cre/+, \n" for i in range(1, 7))
+    csv_path.write_text("".join(rows), encoding="utf-8")
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "Cre=Cre/+",
+            "--xlinked",
+            "X",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "Some animals were excluded because sex is blank or unrecognized" in output.out
+    assert "Excluded animals:" in output.out
+    assert "Showing 1 of 1 pairs with nonzero probability" in output.out
+    assert "0.5000" in output.out
+    assert all(f"U{i:02d}:" in output.out for i in range(1, 6))
+    assert "U06:" not in output.out
+    assert "and 1 more" in output.out
+
+
+def test_autosomal_only_output_has_no_x_linked_additions(capsys):
+    assert main([str(SAMPLE), "--target", "Cre=Cre/Cre"]) == 0
+
+    output = capsys.readouterr()
+    assert "X-linked per_gene" not in output.out
+    assert "unlinked (r = 1/2)" not in output.out
+    assert "Excluded animals:" not in output.out
