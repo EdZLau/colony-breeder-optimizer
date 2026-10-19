@@ -347,7 +347,7 @@ SWE internships. I want to understand everything.
   the sex column changes to one containing the same raw value.
 - Load is disabled when no sex column is chosen or the mapping table is
   undisplayable.
-- The 374 test count was reported by Copilot; re-run pytest to confirm.
+- The 374 test count was confirmed by running pytest after step 7b-2.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
