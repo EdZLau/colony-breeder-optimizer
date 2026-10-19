@@ -3,7 +3,12 @@
 Rule for this package: standard library only, and no knowledge of the CLI or
 web app. Interfaces call into this package, never the other way around.
 """
-from colony_breeder.core.colony import Animal, load_colony, pedigree_warnings
+from colony_breeder.core.colony import (
+    Animal,
+    load_colony,
+    load_colony_rows,
+    pedigree_warnings,
+)
 from colony_breeder.core.genetics import (
     AllOffspringLethalError,
     format_genotype,
@@ -32,6 +37,7 @@ __all__ = [
     "gametes",
     "generate_pairs",
     "load_colony",
+    "load_colony_rows",
     "offspring_distribution",
     "parse_genotype",
     "pair_flags",

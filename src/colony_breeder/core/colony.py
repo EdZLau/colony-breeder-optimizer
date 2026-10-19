@@ -3,7 +3,7 @@
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from colony_breeder.core.genetics import (
     format_x_linked_genotype,
@@ -43,6 +43,14 @@ def _normalise_mapping(column_mapping: Optional[Mapping[str, str]] = None) -> Di
     """Merge user overrides into the default column mapping."""
     resolved = DEFAULT_COLUMN_MAPPING.copy()
     if column_mapping:
+        unknown_keys = set(column_mapping).difference(DEFAULT_COLUMN_MAPPING)
+        if unknown_keys:
+            valid_keys = ", ".join(DEFAULT_COLUMN_MAPPING)
+            raise ValueError(
+                "Unknown column_mapping key(s): "
+                + ", ".join(sorted(unknown_keys))
+                + f". Valid keys are: {valid_keys}."
+            )
         resolved.update(dict(column_mapping))
     return resolved
 
@@ -81,6 +89,57 @@ def load_colony(
     phase column). Phase text follows that gene order, for example a pair
     configured as ("B", "A", ...) uses "B|A/b|a".
     """
+    csv_path = Path(csv_path)
+
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is not None:
+            reader.fieldnames = [
+                field_name.strip() if field_name is not None else ""
+                for field_name in reader.fieldnames
+            ]
+        return load_colony_rows(
+            reader.fieldnames,
+            reader,
+            column_mapping=column_mapping,
+            gene_columns=gene_columns,
+            x_linked_genes=x_linked_genes,
+            linked_pairs=linked_pairs,
+            source_name=str(csv_path),
+        )
+
+
+def load_colony_rows(
+    fieldnames: Optional[Sequence[Optional[str]]],
+    rows: Iterable[Mapping[Optional[str], object]],
+    column_mapping: Optional[Mapping[str, str]] = None,
+    gene_columns: Optional[Sequence[str]] = None,
+    x_linked_genes: Optional[Sequence[str]] = None,
+    linked_pairs: Optional[
+        Sequence[Tuple[str, str, RecombinationInput, str]]
+    ] = None,
+    source_name: str = "uploaded data",
+) -> List[Animal]:
+    """Validate and load colony rows using their CSV-style field names."""
+    if fieldnames is None:
+        raise ValueError(
+            f"CSV file {source_name} is empty or missing a header row."
+        )
+
+    seen_fieldnames = set()
+    for column_index, fieldname in enumerate(fieldnames, start=1):
+        if not isinstance(fieldname, str):
+            raise ValueError(
+                f"Blank header at column {column_index} in {source_name}."
+            )
+        if not fieldname.strip():
+            continue
+        if fieldname in seen_fieldnames:
+            raise ValueError(
+                f"Duplicate header {fieldname!r} in {source_name}."
+            )
+        seen_fieldnames.add(fieldname)
+
     resolved_mapping = _normalise_mapping(column_mapping)
     gene_names = _validate_gene_columns(gene_columns)
     x_linked_gene_names = set(_validate_gene_columns(x_linked_genes or []))
@@ -95,140 +154,168 @@ def load_colony(
         gene_names,
         x_linked_gene_names,
     )
-    csv_path = Path(csv_path)
 
-    with open(csv_path, "r", encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if reader.fieldnames is None:
-            raise ValueError(f"CSV file {csv_path} is empty or missing a header row.")
+    missing_columns = []
+    for canonical_name in DEFAULT_COLUMN_MAPPING:
+        actual_name = resolved_mapping.get(canonical_name, DEFAULT_COLUMN_MAPPING[canonical_name])
+        if actual_name not in fieldnames:
+            missing_columns.append(actual_name)
+    if missing_columns:
+        raise ValueError(
+            "Required columns missing from the CSV: " + ", ".join(sorted(set(missing_columns)))
+        )
 
-        cleaned_fieldnames = [field_name.strip() if field_name is not None else "" for field_name in reader.fieldnames]
-        reader.fieldnames = cleaned_fieldnames
+    missing_gene_columns = [gene for gene in gene_names if gene not in fieldnames]
+    if missing_gene_columns:
+        raise ValueError(
+            "Requested gene column(s) missing from the CSV: "
+            + ", ".join(missing_gene_columns)
+            + ". Available columns: "
+            + ", ".join(fieldname or "" for fieldname in fieldnames)
+        )
 
-        missing_columns = []
-        for canonical_name in DEFAULT_COLUMN_MAPPING:
-            actual_name = resolved_mapping.get(canonical_name, DEFAULT_COLUMN_MAPPING[canonical_name])
-            if actual_name not in reader.fieldnames:
-                missing_columns.append(actual_name)
-        if missing_columns:
-            raise ValueError(
-                "Required columns missing from the CSV: " + ", ".join(sorted(set(missing_columns)))
-            )
+    missing_phase_columns = [
+        phase_column
+        for _, _, _, phase_column in normalized_linked_pairs
+        if phase_column not in fieldnames
+    ]
+    if missing_phase_columns:
+        raise ValueError(
+            "Linked-pair phase column(s) missing from the CSV: "
+            + ", ".join(dict.fromkeys(missing_phase_columns))
+            + ". Available columns: "
+            + ", ".join(fieldname or "" for fieldname in fieldnames)
+        )
 
-        missing_gene_columns = [gene for gene in gene_names if gene not in reader.fieldnames]
-        if missing_gene_columns:
-            raise ValueError(
-                "Requested gene column(s) missing from the CSV: "
-                + ", ".join(missing_gene_columns)
-                + ". Available columns: "
-                + ", ".join(reader.fieldnames)
-            )
+    animals: List[Animal] = []
+    seen_ids = set()
 
-        missing_phase_columns = [
-            phase_column
-            for _, _, _, phase_column in normalized_linked_pairs
-            if phase_column not in reader.fieldnames
-        ]
-        if missing_phase_columns:
-            raise ValueError(
-                "Linked-pair phase column(s) missing from the CSV: "
-                + ", ".join(dict.fromkeys(missing_phase_columns))
-                + ". Available columns: "
-                + ", ".join(reader.fieldnames)
-            )
-
-        animals: List[Animal] = []
-        seen_ids = set()
-
-        for row_index, row in enumerate(reader, start=2):
-            extra_values = row.get(None, [])
-            if any(value.strip() for value in extra_values if value is not None):
-                raise ValueError(f"Row {row_index} has more values than headers.")
-
-            if not any(
-                (value or "").strip()
-                for key, value in row.items()
-                if key is not None and value is not None
-            ):
-                continue
-
-            raw_id = (row.get(resolved_mapping["animal_id"], "") or "").strip()
-            if not raw_id:
-                raise ValueError(f"Row {row_index} is missing an animal_id.")
-            if raw_id in seen_ids:
-                raise ValueError(f"Duplicate animal_id {raw_id!r} found in {csv_path}.")
-            seen_ids.add(raw_id)
-
-            sex_value = (row.get(resolved_mapping["sex"], "") or "").strip()
-            sex = sex_value.upper()
-            if sex not in {"M", "F"} and not x_linked_gene_names:
-                raise ValueError(
-                    f"Invalid sex value {sex_value!r} for animal {raw_id!r}. Expected 'M' or 'F'."
-                )
-
-            cage = (row.get(resolved_mapping["cage"], "") or "").strip()
-            mother_id = (row.get(resolved_mapping["mother_id"], "") or "").strip()
-            father_id = (row.get(resolved_mapping["father_id"], "") or "").strip()
-
-            genotypes: Dict[str, str] = {}
-            for gene_name in gene_names:
-                raw_value = row.get(gene_name, "")
-                if raw_value is None:
-                    raw_value = ""
-                cleaned = raw_value.strip()
-                if cleaned:
-                    try:
-                        if gene_name in x_linked_gene_names:
-                            if sex in {"M", "F"}:
-                                parsed = parse_x_linked_genotype(cleaned, sex)
-                                cleaned = format_x_linked_genotype(parsed)
-                            else:
-                                parts = [part.strip() for part in cleaned.split("/")]
-                                if len(parts) != 2 or not all(parts):
-                                    raise ValueError(
-                                        f"Cannot read X-linked genotype {cleaned!r}: "
-                                        "expected slash style with two non-empty parts, "
-                                        "like 'A/a' or 'A/Y'."
-                                    )
-                        else:
-                            parse_genotype(cleaned)
-                    except ValueError as exc:
+    for row_index, row in enumerate(rows, start=2):
+        for column_name, value in row.items():
+            if column_name is None:
+                extra_values = value if isinstance(value, list) else []
+                for extra_value in extra_values:
+                    if extra_value is not None and not isinstance(extra_value, str):
                         raise ValueError(
-                            f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: "
-                            f"{cleaned!r}. {exc}"
-                        ) from exc
-                genotypes[gene_name] = cleaned
-
-            phases: Dict[Tuple[str, str], str] = {}
-            for gene1, gene2, _, phase_column in normalized_linked_pairs:
-                raw_phase = row.get(phase_column, "")
-                phase = (raw_phase or "").strip()
-                if phase and genotypes[gene1] and genotypes[gene2]:
-                    try:
-                        parse_phased_genotype(phase)
-                        validate_phase_matches_genotypes(
-                            phase,
-                            genotypes[gene1],
-                            genotypes[gene2],
+                            f"Row {row_index} has a non-text value in column "
+                            "'<extra>'. Expected text or None."
                         )
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"Invalid phase for animal {raw_id!r} in gene pair "
-                            f"({gene1!r}, {gene2!r}): {phase!r}. {exc}"
-                        ) from exc
-                phases[(gene1, gene2)] = phase
-
-            animals.append(
-                Animal(
-                    animal_id=raw_id,
-                    sex=sex,
-                    cage=cage,
-                    mother_id=mother_id,
-                    father_id=father_id,
-                    genotypes=genotypes,
-                    phases=phases,
+                continue
+            if value is not None and not isinstance(value, str):
+                raise ValueError(
+                    f"Row {row_index} has a non-text value in column "
+                    f"{column_name!r}. Expected text or None."
                 )
+
+        extra_values = row.get(None, [])
+        if isinstance(extra_values, list) and any(
+            value.strip() for value in extra_values if value is not None
+        ):
+            raise ValueError(f"Row {row_index} has more values than headers.")
+
+        row_keys = {
+            key for key in row
+            if isinstance(key, str) and key.strip()
+        }
+        expected_keys = {
+            fieldname for fieldname in fieldnames
+            if isinstance(fieldname, str) and fieldname.strip()
+        }
+        if row_keys != expected_keys:
+            missing_keys = sorted(expected_keys - row_keys)
+            extra_keys = sorted(
+                (key for key in row_keys - expected_keys),
+                key=lambda key: "" if key is None else str(key),
             )
+            raise ValueError(
+                f"Row {row_index} keys must match the header names. "
+                f"Missing: {missing_keys!r}; unexpected: {extra_keys!r}."
+            )
+
+        if not any(
+            (value or "").strip()
+            for key, value in row.items()
+            if key is not None and value is not None
+        ):
+            continue
+
+        raw_id = (row.get(resolved_mapping["animal_id"], "") or "").strip()
+        if not raw_id:
+            raise ValueError(f"Row {row_index} is missing an animal_id.")
+        if raw_id in seen_ids:
+            raise ValueError(f"Duplicate animal_id {raw_id!r} found in {source_name}.")
+        seen_ids.add(raw_id)
+
+        sex_value = (row.get(resolved_mapping["sex"], "") or "").strip()
+        sex = sex_value.upper()
+        if sex not in {"M", "F"} and not x_linked_gene_names:
+            raise ValueError(
+                f"Invalid sex value {sex_value!r} for animal {raw_id!r}. Expected 'M' or 'F'."
+            )
+
+        cage = (row.get(resolved_mapping["cage"], "") or "").strip()
+        mother_id = (row.get(resolved_mapping["mother_id"], "") or "").strip()
+        father_id = (row.get(resolved_mapping["father_id"], "") or "").strip()
+
+        genotypes: Dict[str, str] = {}
+        for gene_name in gene_names:
+            raw_value = row.get(gene_name, "")
+            if raw_value is None:
+                raw_value = ""
+            cleaned = raw_value.strip()
+            if cleaned:
+                try:
+                    if gene_name in x_linked_gene_names:
+                        if sex in {"M", "F"}:
+                            parsed = parse_x_linked_genotype(cleaned, sex)
+                            cleaned = format_x_linked_genotype(parsed)
+                        else:
+                            parts = [part.strip() for part in cleaned.split("/")]
+                            if len(parts) != 2 or not all(parts):
+                                raise ValueError(
+                                    f"Cannot read X-linked genotype {cleaned!r}: "
+                                    "expected slash style with two non-empty parts, "
+                                    "like 'A/a' or 'A/Y'."
+                                )
+                    else:
+                        parse_genotype(cleaned)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: "
+                        f"{cleaned!r}. {exc}"
+                    ) from exc
+            genotypes[gene_name] = cleaned
+
+        phases: Dict[Tuple[str, str], str] = {}
+        for gene1, gene2, _, phase_column in normalized_linked_pairs:
+            raw_phase = row.get(phase_column, "")
+            phase = (raw_phase or "").strip()
+            if phase and genotypes[gene1] and genotypes[gene2]:
+                try:
+                    parse_phased_genotype(phase)
+                    validate_phase_matches_genotypes(
+                        phase,
+                        genotypes[gene1],
+                        genotypes[gene2],
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Invalid phase for animal {raw_id!r} in gene pair "
+                        f"({gene1!r}, {gene2!r}): {phase!r}. {exc}"
+                    ) from exc
+            phases[(gene1, gene2)] = phase
+
+        animals.append(
+            Animal(
+                animal_id=raw_id,
+                sex=sex,
+                cage=cage,
+                mother_id=mother_id,
+                father_id=father_id,
+                genotypes=genotypes,
+                phases=phases,
+            )
+        )
 
     return animals
 
