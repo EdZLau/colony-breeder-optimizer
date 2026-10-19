@@ -11,6 +11,12 @@ from colony_breeder.core import (
     parse_genotype,
     probability_of_target,
 )
+from colony_breeder.core.genetics import (
+    format_x_linked_genotype,
+    parse_x_linked_genotype,
+    x_linked_offspring_distribution,
+    x_linked_probability_of_target,
+)
 
 P = parse_genotype  # short alias so expected values stay readable
 F = Fraction
@@ -165,3 +171,111 @@ def test_target_probability_respects_lethal_renormalisation():
 
 def test_lethal_target_has_probability_zero():
     assert probability_of_target("Ay/a", "Ay/a", "Ay/Ay", lethal=["Ay/Ay"]) == F(0)
+
+
+# ---------- X-linked crosses ----------
+
+def test_x_linked_genotype_uses_sex_specific_slash_forms():
+    assert parse_x_linked_genotype("A/a", "F") == P("A/a")
+    assert parse_x_linked_genotype("A/y", "M") == P("A/Y")
+
+
+def test_format_x_linked_genotype_places_y_last():
+    assert format_x_linked_genotype(("Y", "a")) == "a/Y"
+    assert format_x_linked_genotype(("A", "Y")) == "A/Y"
+    assert format_x_linked_genotype(("A", "a")) == "A/a"
+
+
+@pytest.mark.parametrize(
+    ("genotype", "sex"),
+    [
+        ("Aa", "F"),
+        ("A/Y", "F"),
+        ("A/a", "M"),
+        ("Y/A", "M"),
+        ("A", "M"),
+        ("y/a", "F"),
+        ("a/y", "F"),
+    ],
+)
+def test_x_linked_genotype_rejects_invalid_sex_forms(genotype, sex):
+    with pytest.raises(ValueError, match="X-linked genotype"):
+        parse_x_linked_genotype(genotype, sex)
+
+
+def test_XAXa_x_XAY_has_textbook_joint_sex_and_genotype_distribution():
+    assert x_linked_offspring_distribution("A/a", "A/Y") == {
+        ("F", P("A/A")): F(1,  4),
+        ("F", P("A/a")): F(1, 4),
+        ("M", P("A/Y")): F(1, 4),
+        ("M", P("a/Y")): F(1, 4),
+    }
+
+
+def test_lethal_aY_renormalizes_joint_sex_and_genotype_distribution():
+    distribution = x_linked_offspring_distribution(
+        "A/a",
+        "A/Y",
+        lethal=["a/Y"],
+    )
+
+    assert distribution == {
+        ("F", P("A/A")): F(1, 3),
+        ("F", P("A/a")): F(1, 3),
+        ("M", P("A/Y")): F(1, 3),
+    }
+    assert sum(
+        probability for (sex, _), probability in distribution.items() if sex == "F"
+    ) == F(2, 3)
+    assert sum(
+        probability for (sex, _), probability in distribution.items() if sex == "M"
+    ) == F(1, 3)
+
+
+def test_x_linked_target_probability_is_exact_and_includes_sex_ratio():
+    assert x_linked_probability_of_target("A/a", "A/Y", "a/Y") == F(1, 4)
+    assert x_linked_probability_of_target(
+        "A/a",
+        "A/Y",
+        "A/Y",
+        lethal=["a/Y"],
+    ) == F(1, 3)
+
+
+def test_x_linked_target_can_list_genotypes_for_both_sexes():
+    assert x_linked_probability_of_target(
+        "A/a",
+        "A/Y",
+        ["a/a", "a/Y"],
+    ) == F(1, 4)
+    assert x_linked_probability_of_target(
+        "A/a",
+        "a/Y",
+        ["a/a", "a/Y"],
+    ) == F(1, 2)
+
+
+def test_homozygous_x_linked_mother_passes_one_allele_to_each_sex():
+    assert x_linked_offspring_distribution("a/a", "A/Y") == {
+        ("F", P("A/a")): F(1, 2),
+        ("M", P("a/Y")): F(1, 2),
+    }
+
+
+def test_unreachable_x_linked_lethal_does_not_change_distribution():
+    cross = x_linked_offspring_distribution("a/a", "A/Y")
+    with_unreachable_lethal = x_linked_offspring_distribution(
+        "a/a",
+        "A/Y",
+        lethal=["A/A"],
+    )
+
+    assert with_unreachable_lethal == cross == {
+        ("F", P("A/a")): F(1, 2),
+        ("M", P("a/Y")): F(1, 2),
+    }
+
+
+def test_all_x_linked_offspring_lethal_raises_existing_error():
+    with pytest.raises(AllOffspringLethalError, match="lethal"):
+        x_linked_offspring_distribution("A/a", "A/Y", lethal=["A/A", "A/a", "A/Y", "a/Y"])

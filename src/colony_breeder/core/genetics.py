@@ -1,7 +1,10 @@
-"""Genetics for ONE autosomal gene.
+"""Genetics for one autosomal or X-linked gene.
 
 Everything here is pure logic: no files, no printing, no command line.
 Probabilities are fractions.Fraction, so 1/3 stays exactly 1/3.
+X-linked crosses assume a 1:1 sex ratio at conception, no sex-specific
+viability apart from listed lethals, no pseudoautosomal region or X-inactivation,
+and no recombination.
 
 Vocabulary used in this file
 - allele:   one version of a gene, e.g. "A", "a", "Cre", "+".
@@ -15,6 +18,8 @@ from typing import Dict, Iterable, Tuple, Union
 
 Genotype = Tuple[str, str]
 Distribution = Dict[Genotype, Fraction]
+XLinkedState = Tuple[str, Genotype]
+XLinkedDistribution = Dict[XLinkedState, Fraction]
 
 
 class AllOffspringLethalError(ValueError):
@@ -46,6 +51,14 @@ def parse_genotype(text: str) -> Genotype:
 
 def format_genotype(genotype: Genotype) -> str:
     """Display a genotype in slash style, e.g. ("A", "a") -> "A/a"."""
+    return "/".join(genotype)
+
+
+def format_x_linked_genotype(genotype: Genotype) -> str:
+    """Display an X-linked genotype with the Y chromosome last, if present."""
+    if "Y" in genotype:
+        allele = next(allele for allele in genotype if allele != "Y")
+        return f"{allele}/Y"
     return "/".join(genotype)
 
 
@@ -124,3 +137,130 @@ def probability_of_target(
     distribution = offspring_distribution(parent1, parent2, lethal)
     targets = {parse_genotype(text) for text in _as_list(target)}
     return sum((p for g, p in distribution.items() if g in targets), Fraction(0))
+
+
+def parse_x_linked_genotype(text: str, sex: str) -> Genotype:
+    """Parse slash-style X-linked genotypes for females ("A/a") or males ("A/Y").
+
+    "y" is accepted as the male sex-chromosome marker and normalized to "Y".
+    The returned tuple is sorted like other internal genotypes.
+    """
+    cleaned = text.strip()
+    normalized_sex = sex.strip().upper()
+    if normalized_sex not in {"F", "M"}:
+        raise ValueError(f"Invalid sex {sex!r} for X-linked genotype; expected 'F' or 'M'.")
+    if "/" not in cleaned:
+        expected = "'A/a'" if normalized_sex == "F" else "'A/Y'"
+        raise ValueError(
+            f"Cannot read X-linked genotype {text!r}: expected slash style like {expected}."
+        )
+
+    parts = [part.strip() for part in cleaned.split("/")]
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(
+            f"Cannot read X-linked genotype {text!r}: expected slash style with two parts, "
+            "like 'A/a' or 'A/Y'."
+        )
+
+    first, second = parts
+    if normalized_sex == "M":
+        if first.lower() == "y" or second.lower() != "y":
+            raise ValueError(
+                f"Invalid X-linked genotype {text!r} for male; expected one allele "
+                "followed by '/Y', like 'A/Y'."
+            )
+        return tuple(sorted((first, "Y")))
+
+    if any(part.lower() == "y" for part in parts):
+        raise ValueError(
+            f"Invalid X-linked genotype {text!r} for female; expected two X alleles "
+            "in slash style, like 'A/a'."
+        )
+    return tuple(sorted(parts))
+
+
+def _parse_x_linked_genotype_without_sex(text: str) -> Genotype:
+    """Parse a target or lethal genotype whose form identifies its offspring sex."""
+    cleaned = text.strip()
+    if "/" not in cleaned:
+        raise ValueError(
+            f"Cannot read X-linked genotype {text!r}: expected slash style like 'A/a' or 'A/Y'."
+        )
+    parts = [part.strip() for part in cleaned.split("/")]
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(
+            f"Cannot read X-linked genotype {text!r}: expected slash style with two parts, "
+            "like 'A/a' or 'A/Y'."
+        )
+    sex = "M" if parts[1].lower() == "y" else "F"
+    return parse_x_linked_genotype(cleaned, sex)
+
+
+def x_linked_offspring_distribution(
+    mother: str,
+    father: str,
+    lethal: Iterable[str] = (),
+) -> XLinkedDistribution:
+    """Return a joint {(sex, genotype): probability} distribution for X-linked pups.
+
+    Sex is "F" for daughters and "M" for sons. The 1:1 sex ratio applies at
+    conception; lethal outcomes are removed from the joint distribution and
+    surviving sex/genotype outcomes are then renormalized together.
+    """
+    maternal_genotype = parse_x_linked_genotype(mother, "F")
+    paternal_genotype = parse_x_linked_genotype(father, "M")
+    lethal_set = {
+        _parse_x_linked_genotype_without_sex(text)
+        for text in _as_list(lethal)
+    }
+    maternal_gametes = gametes(maternal_genotype)
+    paternal_x = next(allele for allele in paternal_genotype if allele != "Y")
+
+    distribution: XLinkedDistribution = {}
+    for maternal_allele, maternal_probability in maternal_gametes.items():
+        for paternal_allele, sex in ((paternal_x, "F"), ("Y", "M")):
+            genotype = tuple(sorted((maternal_allele, paternal_allele)))
+            state = (sex, genotype)
+            distribution[state] = (
+                distribution.get(state, Fraction(0))
+                + maternal_probability * Fraction(1, 2)
+            )
+
+    survivors = {
+        state: probability
+        for state, probability in distribution.items()
+        if state[1] not in lethal_set
+    }
+    total = sum(survivors.values(), Fraction(0))
+    if total == 0:
+        raise AllOffspringLethalError(
+            "Every possible offspring genotype is lethal; nothing survives."
+        )
+    return {state: probability / total for state, probability in survivors.items()}
+
+
+def x_linked_probability_of_target(
+    mother: str,
+    father: str,
+    target: Union[str, Iterable[str]],
+    lethal: Iterable[str] = (),
+) -> Fraction:
+    """Return the all-pup probability of any target X-linked genotype.
+
+    Male targets use "A/Y"; female targets use "A/a". The probability
+    includes the sex ratio and is conditional on survival after joint lethal
+    renormalization.
+    """
+    targets = {
+        _parse_x_linked_genotype_without_sex(text)
+        for text in _as_list(target)
+    }
+    distribution = x_linked_offspring_distribution(mother, father, lethal)
+    return sum(
+        (
+            probability
+            for (_, genotype), probability in distribution.items()
+            if genotype in targets
+        ),
+        Fraction(0),
+    )
