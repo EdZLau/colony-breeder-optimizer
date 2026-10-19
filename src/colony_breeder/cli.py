@@ -3,6 +3,7 @@
 import argparse
 import csv
 import sys
+from fractions import Fraction
 from typing import Optional, Sequence, Tuple
 
 from colony_breeder.core.colony import load_colony, pedigree_warnings
@@ -40,6 +41,27 @@ def _gene_name(value: str) -> str:
     return gene
 
 
+def _linked_pair(value: str) -> Tuple[str, str, str, str]:
+    """Parse GENE1,GENE2,R,PHASE_COLUMN without converting R to float."""
+    fields = [field.strip() for field in value.split(",")]
+    if len(fields) != 4 or not all(fields):
+        raise argparse.ArgumentTypeError(
+            "expected GENE1,GENE2,R,PHASE_COLUMN with four non-empty fields"
+        )
+    gene1, gene2, recombination_frequency, phase_column = fields
+    try:
+        frequency = Fraction(recombination_frequency)
+    except (ValueError, ZeroDivisionError) as exc:
+        raise argparse.ArgumentTypeError(
+            "R must be a recombination fraction between 0 and 0.5"
+        ) from exc
+    if not Fraction(0) <= frequency <= Fraction(1, 2):
+        raise argparse.ArgumentTypeError(
+            "R must be a recombination fraction between 0 and 0.5"
+        )
+    return gene1, gene2, recombination_frequency, phase_column
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Rank male x female colony pairs by target genotype probability."
@@ -68,6 +90,20 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         metavar="GENE",
         help="mark a gene as X-linked; repeat as needed",
+    )
+    parser.add_argument(
+        "--linked",
+        action="append",
+        type=_linked_pair,
+        default=[],
+        metavar="GENE1,GENE2,R,PHASE_COLUMN",
+        help=(
+            "configure a linked autosomal pair; repeat as needed. R is a "
+            "recombination fraction from 0 to 0.5, not map distance. Gene "
+            "names cannot contain commas. PHASE_COLUMN contains text like "
+            "A|B/a|b in GENE1,GENE2 order; phase is required only for animals "
+            "heterozygous at both genes."
+        ),
     )
     parser.add_argument(
         "--top",
@@ -109,6 +145,9 @@ def _print_results(
     top: Optional[int],
     show_skipped: bool,
     x_linked_targets: Sequence[str] = (),
+    linked_pairs: Sequence[Tuple[str, str, str]] = (),
+    linked_target_genes: Sequence[str] = (),
+    survival_only_linked_pairs: Sequence[Tuple[str, str]] = (),
 ) -> None:
     zero_probability_count = sum(pair.probability == 0 for pair in result.ranked)
     nonzero_pairs = [pair for pair in result.ranked if pair.probability != 0]
@@ -116,7 +155,14 @@ def _print_results(
     if top is not None:
         visible_pairs = visible_pairs[:top]
 
-    print("Assumptions: autosomal genes; target genes unlinked; all animals fertile and available.")
+    if linked_pairs:
+        print(
+            "Assumptions: configured linked autosomal pairs use their supplied "
+            "recombination fractions; other gene groups are independent; all "
+            "animals fertile and available."
+        )
+    else:
+        print("Assumptions: autosomal genes; target genes unlinked; all animals fertile and available.")
     if not nonzero_pairs:
         if not result.skipped:
             print("No pair can produce the target.")
@@ -129,6 +175,10 @@ def _print_results(
     )
     if x_linked_targets:
         header += "  X-linked per_gene"
+    if linked_pairs:
+        header += "  Linked pair joint probabilities"
+    if linked_target_genes:
+        header += "  Linked per_gene (descriptive)"
     print(header)
     for rank, pair in enumerate(visible_pairs, start=1):
         flags = ",".join(pair.flags) if pair.flags else "-"
@@ -143,19 +193,44 @@ def _print_results(
                 if gene in pair.per_gene
             )
             row += f"  {per_gene_text}"
+        if linked_pairs:
+            linked_probability_text = ", ".join(
+                f"{gene1},{gene2}={pair.linked_pair_probabilities[(gene1, gene2)]}"
+                for gene1, gene2, _ in linked_pairs
+                if (gene1, gene2) in pair.linked_pair_probabilities
+            )
+            row += f"  {linked_probability_text or '-'}"
+        if linked_target_genes:
+            linked_per_gene_text = ", ".join(
+                f"{gene}={pair.per_gene[gene]}"
+                for gene in linked_target_genes
+                if gene in pair.per_gene
+            )
+            row += f"  {linked_per_gene_text}"
         print(_ascii(row))
     if x_linked_targets:
         print(
             "Note: X-linked per-gene probabilities are descriptive marginal "
-            "values among survivors and must not be multiplied. Multiple "
-            "X-linked genes are treated as unlinked (r = 1/2), an approximation "
-            "until step 6."
+            "values among survivors and must not be multiplied. X-linked "
+            "recombination is not modeled; multiple X-linked genes are treated "
+            "as unlinked (r = 1/2), an approximation."
+        )
+    if linked_target_genes:
+        print(
+            "Note: linked per-gene values are descriptive marginals among "
+            "survivors and must not be multiplied."
+        )
+    for gene1, gene2 in survival_only_linked_pairs:
+        print(
+            f"Note: linked pair ({gene1}, {gene2}) has no target gene; its "
+            "joint factor affects survival only."
         )
     print(f"Showing {len(visible_pairs)} of {len(nonzero_pairs)} pairs with nonzero probability")
     print(f"Hidden zero-probability pairs: {zero_probability_count}")
 
     categories = {
         "missing_genotype": 0,
+        "missing_phase": 0,
         "excluded_related": 0,
         "all_lethal": 0,
     }
@@ -166,6 +241,7 @@ def _print_results(
     print(
         "Skipped categories: "
         f"missing genotype={categories['missing_genotype']}, "
+        f"missing phase={categories['missing_phase']}, "
         f"excluded related={categories['excluded_related']}, "
         f"all offspring lethal={categories['all_lethal']}"
     )
@@ -195,11 +271,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     targets = _settings(args.target)
     lethals = _settings(args.lethal)
     x_linked_genes = list(dict.fromkeys(args.xlinked))
-    genes = list(dict.fromkeys([*targets, *lethals, *x_linked_genes]))
+    linked_genes = list(dict.fromkeys(
+        gene
+        for gene1, gene2, _, _ in args.linked
+        for gene in (gene1, gene2)
+    ))
+    genes = list(dict.fromkeys(
+        [*targets, *lethals, *x_linked_genes, *linked_genes]
+    ))
     ignored_lethal_genes = [
         gene
         for gene in lethals
-        if gene not in targets and gene not in x_linked_genes
+        if gene not in targets
+        and gene not in x_linked_genes
+        and gene not in linked_genes
     ]
 
     try:
@@ -207,37 +292,49 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.csv_path,
             gene_columns=genes,
             x_linked_genes=x_linked_genes,
+            linked_pairs=args.linked,
         )
-        unmarked_y_genes = [
-            gene
-            for gene in genes
-            if gene not in x_linked_genes
-            and any(
-                _has_y_sex_chromosome_marker(animal.genotypes.get(gene, ""))
-                for animal in colony
-            )
-        ]
-        warnings = pedigree_warnings(colony)
+    except (UnicodeDecodeError, ValueError, OSError, csv.Error) as exc:
+        _report_data_error(exc, x_linked_genes)
+        return 1
+
+    unmarked_y_genes = [
+        gene
+        for gene in genes
+        if gene not in x_linked_genes
+        and any(
+            _has_y_sex_chromosome_marker(animal.genotypes.get(gene, ""))
+            for animal in colony
+        )
+    ]
+    warnings = pedigree_warnings(colony)
+    ranking_linked_pairs = [
+        (gene1, gene2, recombination_frequency)
+        for gene1, gene2, recombination_frequency, _ in args.linked
+    ]
+    try:
         result = rank_pairs(
             colony,
             target=targets,
             lethal=lethals,
             exclude_related=args.exclude_related,
             x_linked_genes=x_linked_genes,
+            linked_pairs=ranking_linked_pairs,
         )
-    except UnicodeDecodeError:
-        print(
-            "Error: CSV file is not valid UTF-8; save it as a UTF-8 CSV file.",
-            file=sys.stderr,
-        )
-        return 1
-    except (ValueError, OSError, csv.Error) as exc:
-        message = str(exc)
-        if _is_x_linked_animal_genotype_error(message, x_linked_genes):
-            message += " If this gene is autosomal, remove it from --xlinked."
-        print(_ascii(f"Error: {message}"), file=sys.stderr)
+    except ValueError as exc:
+        _report_data_error(exc, x_linked_genes)
         return 1
 
+    ranked_linked_pair_keys = {
+        pair_key
+        for ranked_pair in result.ranked
+        for pair_key in ranked_pair.linked_pair_probabilities
+    }
+    active_linked_pairs = [
+        linked_pair
+        for linked_pair in ranking_linked_pairs
+        if linked_pair[:2] in ranked_linked_pair_keys
+    ]
     for severity, message in warnings:
         if severity == "warning":
             print(_ascii(f"Pedigree warning: {message}"))
@@ -254,7 +351,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         )
     x_linked_targets = [gene for gene in targets if gene in x_linked_genes]
-    _print_results(result, args.top, args.show_skipped, x_linked_targets)
+    linked_target_genes = [gene for gene in targets if gene in linked_genes]
+    survival_only_linked_pairs = [
+        (gene1, gene2)
+        for gene1, gene2, _ in active_linked_pairs
+        if gene1 not in targets and gene2 not in targets
+    ]
+    _print_results(
+        result,
+        args.top,
+        args.show_skipped,
+        x_linked_targets,
+        active_linked_pairs,
+        linked_target_genes,
+        survival_only_linked_pairs,
+    )
     return 0
 
 
@@ -265,6 +376,17 @@ def _is_x_linked_animal_genotype_error(message: str, genes: Sequence[str]) -> bo
         f"in column {gene!r}" in message or f"in gene {gene!r}" in message
         for gene in genes
     )
+
+
+def _report_data_error(exc: Exception, x_linked_genes: Sequence[str]) -> None:
+    """Print a concise data error, including X-linked genotype guidance."""
+    if isinstance(exc, UnicodeDecodeError):
+        message = "CSV file is not valid UTF-8; save it as a UTF-8 CSV file."
+    else:
+        message = str(exc)
+        if _is_x_linked_animal_genotype_error(message, x_linked_genes):
+            message += " If this gene is autosomal, remove it from --xlinked."
+    print(_ascii(f"Error: {message}"), file=sys.stderr)
 
 
 if __name__ == "__main__":

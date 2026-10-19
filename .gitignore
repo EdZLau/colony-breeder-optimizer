@@ -8,9 +8,10 @@ dist/
 .pytest_cache/
 .DS_Store
 # Real lab data may be unpublished. Never commit it by accident.
-# Only the fake sample file in data/ is meant to be tracked.
+# Only explicitly named fake sample files in data/ are meant to be tracked.
 *.csv
 *.xlsx
 review.txt
 data/*
 !data/sample_mice.csv
+!data/sample_linked_FAKE.csv

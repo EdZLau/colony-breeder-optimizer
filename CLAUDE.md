@@ -40,7 +40,7 @@ SWE internships. I want to understand everything.
 6. Linked genes: recombination frequency per gene pair, each animal's phase
    (HB/hb vs Hb/hB), parental gametes (1-r)/2, recombinant gametes r/2,
    tests vs known values (10 map units = 10% recombinant)
-   (6a and 6b DONE; 6c CLI wiring NEXT)
+   (DONE)
 7. Streamlit app: upload .xlsx/.csv without reformatting; dropdowns to map ID, sex,
    cage, mother, father, each gene; per-gene settings table for symbol meanings and
    target genotypes; lethal/sibling/linkage options; downloadable ranked table; note
@@ -200,12 +200,35 @@ SWE internships. I want to understand everything.
   linkage is deferred and the unlinked assumption is approximate, worst for
   tightly linked genes. No pseudoautosomal region, X-inactivation, or
   sex-specific viability apart from listed lethals is modeled.
-- Step 6c CLI to-do: suppress the “untargeted autosomal lethal ignored” note
-  for genes that belong to a linked pair; show each pair’s joint probability
-  from `linked_pair_probabilities`; accept recombination `r` as text; and
-  validate/use the same configured gene order for phase loading and ranking
-  so the order mismatch is caught at the CLI boundary.
-- Latest full-suite result after 6b-2: 264 tests passed.
+- Full-suite result after 6b-2: 264 tests passed.
+
+## Decisions made in step 6c
+- Repeatable `--linked GENE1,GENE2,R,PHASE_COLUMN` configures an autosomal pair.
+  Gene names cannot contain commas. `R` is passed to the core as text; both
+  `"1/10"` and `"0.1"` represent the exact fraction `1/10`. CLI help describes
+  R as a recombination fraction from 0 to 0.5, not map distance.
+- The CLI uses each option's ordered gene pair for both loading and ranking.
+  The loader validates phase text against genotype columns and reports phase
+  errors before printing results. If both genes use identical allele symbols,
+  a swapped gene order in phase text cannot be detected from the genotypes.
+- Linked-pair genes are included among CSV genotype columns. An untargeted
+  lethal setting is not described as ignored for genes in linked pairs, since
+  a lethal on either linked gene can affect joint survival.
+- Output includes each active pair's exact joint factor from
+  `RankedPair.linked_pair_probabilities`. Active lethal-only pairs are shown
+  with a note that their factor affects survival only. Linked `per_gene`
+  values are labeled descriptive marginals and must not be multiplied.
+- Invalid CLI syntax and recombination text are usage errors (exit 2).
+  Loading and ranking data/configuration errors are concise stderr messages
+  with exit 1; warnings and results are printed to stdout.
+- `data/sample_linked_FAKE.csv` contains fake demonstration records for trying
+  linked CLI options; no existing sample data was changed.
+- One recombination fraction `r` is used for both sexes, although female mice
+  typically recombine more.
+- Treating 10 map units as `r = 1/10` is an approximation: double crossovers
+  can make map distance exceed the observed recombination fraction.
+- Linked pairs and unpaired genes are treated as independent groups.
+- Latest full-suite result after 6c: 280 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv

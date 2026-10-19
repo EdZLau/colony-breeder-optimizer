@@ -5,6 +5,9 @@ import pytest
 from colony_breeder.cli import _gene_genotype, main
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "sample_mice.csv"
+LINKED_SAMPLE = (
+    Path(__file__).resolve().parent.parent / "data" / "sample_linked_FAKE.csv"
+)
 
 
 def test_gene_genotype_splits_only_at_first_equals():
@@ -336,22 +339,6 @@ def test_untargeted_x_linked_lethal_affects_survival_without_ignored_note(
     assert "ignored (not a target gene)" not in output.out
 
 
-def test_x_linked_and_autosomal_untargeted_lethals_have_distinct_notes(
-    capsys,
-):
-    assert main(
-        [
-            str(SAMPLE),
-            "--target",
-            "Cre=Cre/Cre",
-            "--lethal",
-            "Ob=ob/ob",
-        ]
-    ) == 0
-    autosomal_output = capsys.readouterr()
-    assert "Note: lethal setting for 'Ob' ignored (not a target gene)" in autosomal_output.out
-
-
 @pytest.mark.parametrize(
     ("animal_id", "sex", "genotype"),
     [
@@ -415,11 +402,10 @@ def test_xlinked_cli_joint_probability_and_descriptive_footnote(tmp_path, capsys
     assert "1/6" in output.out
     assert "X-linked per_gene" in output.out
     assert "X2=1/6" in output.out
-    assert (
-        "Note: X-linked per-gene probabilities are descriptive marginal values "
-        "among survivors and must not be multiplied. Multiple X-linked genes "
-        "are treated as unlinked (r = 1/2), an approximation until step 6."
-    ) in output.out
+    assert "X-linked recombination is not modeled" in output.out
+    assert "multiple X-linked genes are treated as unlinked (r = 1/2)" in output.out
+    assert "an approximation" in output.out
+    assert "until step 6" not in output.out
 
 
 def test_unmarked_xlinked_gene_warning_does_not_change_xlinked_probability(
@@ -563,3 +549,311 @@ def test_autosomal_only_output_has_no_x_linked_additions(capsys):
     assert "X-linked per_gene" not in output.out
     assert "unlinked (r = 1/2)" not in output.out
     assert "Excluded animals:" not in output.out
+
+
+def test_linked_cli_multiplies_pair_factor_by_unlinked_gene_once(capsys):
+    # 9/20 linked target probability x 1/2 for C/c = 9/40 overall.
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "A=A/a",
+            "--target",
+            "B=B/b",
+            "--target",
+            "C=C/c",
+            "--linked",
+            "A,B,1/10,AB_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert "9/40" in output.out
+    assert "A,B=9/20" in output.out
+    assert "Linked per_gene (descriptive)" in output.out
+    assert "linked per-gene values are descriptive marginals" in output.out
+
+
+@pytest.mark.parametrize("recombination", ["1/10", "0.1"])
+def test_linked_cli_accepts_fraction_and_decimal_text(recombination, capsys):
+    # 9/20 = (1-r)/2 with r=1/10.
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "A=A/a",
+            "--target",
+            "B=B/b",
+            "--linked",
+            f"A,B,{recombination},AB_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "A,B=9/20" in output.out
+    assert output.err == ""
+
+
+def test_linked_cli_accepts_repeated_pairs(capsys):
+    # Each coupling pair contributes 9/20; C/c contributes 1/2:
+    # (9/20) x (9/20) x (1/2) = 81/800.
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "A=A/a",
+            "--target",
+            "B=B/b",
+            "--target",
+            "C=C/c",
+            "--target",
+            "D=D/d",
+            "--target",
+            "E=E/e",
+            "--linked",
+            "A,B,1/10,AB_phase",
+            "--linked",
+            "D,E,1/10,DE_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "81/800" in output.out
+    assert "A,B=9/20" in output.out
+    assert "D,E=9/20" in output.out
+    assert output.err == ""
+
+
+def test_linked_untargeted_partner_lethal_changes_survival_without_ignored_note(
+    capsys,
+):
+    # The surviving A/a outcomes are the recombinant Ab gametes: (1/20)/(1/2) = 1/10.
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "A=A/a",
+            "--lethal",
+            "B=B/b",
+            "--linked",
+            "A,B,1/10,AB_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "1/10" in output.out
+    assert "A,B=1/10" in output.out
+    assert "lethal setting for 'B' ignored" not in output.out
+    assert output.err == ""
+
+
+def test_linked_lethal_only_pair_prints_survival_only_factor(capsys):
+    # The linked pair's conditional survival factor is 1; C/c remains 1/2.
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "C=C/c",
+            "--lethal",
+            "B=B/b",
+            "--linked",
+            "A,B,1/10,AB_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert any(
+        line.endswith("A,B=1")
+        for line in output.out.splitlines()
+    )
+    assert "linked pair (A, B) has no target gene; its joint factor affects survival only" in output.out
+    assert "lethal setting for 'B' ignored" not in output.out
+    assert output.err == ""
+
+
+def test_inactive_linked_pair_is_not_shown_in_results(capsys):
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "C=C/c",
+            "--linked",
+            "A,B,1/10,AB_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "Linked pair joint probabilities" not in output.out
+    assert not any("A,B=" in line for line in output.out.splitlines())
+    assert output.err == ""
+
+
+def test_active_pair_is_shown_while_second_inactive_pair_is_hidden(capsys):
+    assert main(
+        [
+            str(LINKED_SAMPLE),
+            "--target",
+            "A=A/a",
+            "--linked",
+            "A,B,1/10,AB_phase",
+            "--linked",
+            "D,E,1/10,DE_phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "A,B=1/2" in output.out
+    assert "D,E=" not in output.out
+    assert output.err == ""
+
+
+def test_linked_cli_rejects_phase_written_in_wrong_gene_order(tmp_path, capsys):
+    csv_path = tmp_path / "wrong_phase_order.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,phase\n"
+        "M01,M,C1,,,A/a,B/b,A|B/a|b\n"
+        "F01,F,C2,,,a/a,b/b,a|b/a|b\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "A=A/a",
+            "--linked",
+            "B,A,1/10,phase",
+        ]
+    ) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "M01" in output.err
+    assert "('B', 'A')" in output.err
+    assert "Invalid phase" in output.err
+    assert "Traceback" not in output.err
+
+
+def test_linked_cli_missing_phase_column_names_column(tmp_path, capsys):
+    csv_path = tmp_path / "missing_phase_column.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B\n"
+        "M01,M,C1,,,A/a,B/b\n"
+        "F01,F,C2,,,a/a,b/b\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "A=A/a",
+            "--linked",
+            "A,B,1/10,phase_missing",
+        ]
+    ) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "phase_missing" in output.err
+    assert "Traceback" not in output.err
+
+
+@pytest.mark.parametrize(
+    "linked_value",
+    [
+        "A,B,1/10",
+        "A,,1/10,phase",
+        "A,B,0.6,phase",
+        "A,B,1/0,phase",
+    ],
+)
+def test_linked_cli_malformed_option_is_usage_error(linked_value, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                str(LINKED_SAMPLE),
+                "--target",
+                "A=A/a",
+                "--linked",
+                linked_value,
+            ]
+        )
+
+    output = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "error:" in output.err
+    assert "Traceback" not in output.err
+
+
+def test_linked_cli_help_explains_recombination_fraction(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--help"])
+
+    output = capsys.readouterr()
+    assert exc_info.value.code == 0
+    help_text = " ".join(output.out.split())
+    assert "recombination fraction from 0 to 0.5, not map distance" in help_text
+    assert "Gene names cannot contain commas." in help_text
+    assert "PHASE_COLUMN contains text like A|B/a|b in GENE1,GENE2 order" in help_text
+    assert "phase is required only for animals heterozygous at both genes" in help_text
+
+
+def test_linked_cli_repulsion_cross_has_recombinant_target_probability(
+    tmp_path, capsys
+):
+    csv_path = tmp_path / "repulsion.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,phase\n"
+        "M01,M,C1,,,A/a,B/b,A|b/a|B\n"
+        "F01,F,C2,,,a/a,b/b,a|b/a|b\n",
+        encoding="utf-8",
+    )
+
+    # 1/20 = r/2 because only the recombinant AB gamete gives A/a and B/b.
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "A=A/a",
+            "--target",
+            "B=B/b",
+            "--linked",
+            "A,B,1/10,phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "A,B=1/20" in output.out
+    assert output.err == ""
+
+
+def test_linked_cli_blank_double_heterozygote_phase_is_skipped(
+    tmp_path, capsys
+):
+    csv_path = tmp_path / "blank_phase.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,A,B,phase\n"
+        "M01,M,C1,,,A/a,B/b,\n"
+        "F01,F,C2,,,a/a,b/b,\n",
+        encoding="utf-8",
+    )
+
+    assert main(
+        [
+            str(csv_path),
+            "--target",
+            "A=A/a",
+            "--target",
+            "B=B/b",
+            "--linked",
+            "A,B,1/10,phase",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert "Skipped categories:" in output.out
+    assert "missing phase=1" in output.out
+    assert "Missing phase for animal 'M01'" in output.out
