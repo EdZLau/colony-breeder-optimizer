@@ -47,13 +47,17 @@ SWE internships. I want to understand everything.
    - 7b-1: Add pure upload mapping/loading helpers and opt-in unknown-sex loading
      (DONE).
    - 7b-2: Build the upload UI for sheet/header selection, preview, column/sex
-     mapping, loading, and warnings. <-- NEXT
-   - 7c: Add target, lethal, relatedness, and linkage settings and run core ranking.
+     mapping, loading, and warnings (DONE).
+      - 7b-2a: Add pure presentation logic in `app/streamlit_logic.py` (DONE).
+      - 7b-2b: Add the Streamlit page in `app/streamlit_app.py` and configure
+        `.streamlit/config.toml` (DONE).
+   - 7c: Add target, lethal, relatedness, and linkage settings and run core
+     ranking. <-- NEXT
    - 7d: Show ranked results and warnings; provide a downloadable table and a
      clear note that uploaded data is not stored.
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 353 tests passed.
+   - Latest full-suite result: 374 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -296,6 +300,41 @@ SWE internships. I want to understand everything.
   warnings without a column use the `"Upload"` key. These keys can collide with
   app-generated groups named `"Pedigree"`, `"Cage"`, `"Relatedness"`, or
   `"Upload"` if an upload column has the same name.
+
+## Decisions made in step 7b-2
+- `default_column_selections(fieldnames, previous=None)` uses
+  `guess_column_mapping`, keeping valid previous choices when possible.
+  `"(none)"` is kept only for the optional `cage`, `mother_id`, and `father_id`
+  fields; required fields must use real columns.
+- `default_sex_value_mapping(rows, sex_column, previous=None)` preserves choices
+  for observed raw sex values and guesses values that are newly observed.
+  Mapping keys are raw strings, with `""` for blank cells. `sex_value_label`
+  renders blank as `"(blank)"` for display only; that label is never a key.
+- `sex_mapping_check(rows, sex_column, limit=20)` counts distinct values and
+  marks the mapping table undisplayable when there are more than 20.
+- `gene_column_options(fieldnames, column_mapping)` excludes columns mapped to
+  colony fields. `drop_stale_genes(selected, options)` removes selections that
+  are no longer available.
+- `input_signature(...)` returns a hashable signature covering the file name,
+  SHA-256 content hash (computed in the page), selected sheet, header row,
+  column mapping, sex mapping, and gene selection. A loaded result is shown
+  only while its saved signature matches the current inputs.
+- `preview_rows(upload, limit=10)` returns a deep copy of the preview rows.
+  `format_load_result(result)` returns a frozen display view containing counts,
+  unknown-sex IDs, grouped warnings, errors, and selected-gene value summaries.
+  `colony_sex_warnings(animals)` warns when no male or no female is loaded.
+- The page reads uploads in memory and does not write temporary files, cache
+  upload contents, or log row data. The visible note asks users with sensitive
+  data to run the app locally.
+- The page loads colony structure only. It does not load or validate genotypes
+  or rank pairs, and it states that genotypes are NOT loaded and ranking is
+  unavailable until step 7c.
+- `.streamlit/config.toml` sets `server.maxUploadSize = 10` MB and
+  `browser.gatherUsageStats = false`.
+- Streamlit is optional and is listed in the `[app]` extra. The Streamlit page
+  test uses `pytest.importorskip("streamlit")`, so the core test suite can run
+  when the app dependency is not installed.
+- Full-suite result after step 7b-2: 374 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
