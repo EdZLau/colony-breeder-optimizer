@@ -44,14 +44,16 @@ SWE internships. I want to understand everything.
 7. Streamlit app:
    - 7a: Read CSV/XLSX uploads into validated text rows (DONE).
       - 7a-i: `load_colony_rows` supports uploaded rows and source row offsets (DONE).
-   - 7b: Build upload UI for sheet/header selection and map ID, sex, cage, parent,
-     and gene columns. <-- NEXT
+   - 7b-1: Add pure upload mapping/loading helpers and opt-in unknown-sex loading
+     (DONE).
+   - 7b-2: Build the upload UI for sheet/header selection, preview, column/sex
+     mapping, loading, and warnings. <-- NEXT
    - 7c: Add target, lethal, relatedness, and linkage settings and run core ranking.
    - 7d: Show ranked results and warnings; provide a downloadable table and a
      clear note that uploaded data is not stored.
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result after 7a: 329 tests passed.
+   - Latest full-suite result: 353 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -117,7 +119,8 @@ SWE internships. I want to understand everything.
   setting is ignored with an explanatory note; untargeted X-linked lethals
   affect joint survival (see step 5).
 - The CLI uses default column names only; configurable column mapping is
-  deferred to step 7.
+  still deferred for the CLI. Step 7b-1 adds mapping helpers for the upload
+  path; its selected gene columns are inspected but not loaded or parsed.
 
 ## Decisions made in step 5
 - X-linked genes are marked by gene name with `x_linked_genes` in
@@ -138,9 +141,13 @@ SWE internships. I want to understand everything.
   genes, but the current model ignores that and treats multiple X-linked genes
   as unlinked (`r = 1/2`). This is an approximation, especially for tightly
   linked genes; X-linked linkage is deferred.
-- Animals with blank or unrecognized sex are excluded from pairing and
-  reported through `excluded_animals` and `notes`. Loading with unusable sex
-  still raises when no X-linked gene is marked.
+- Animals with blank or unrecognized sex are excluded from pairing and reported
+  through `excluded_animals` and `notes`. With the default
+  `allow_unknown_sex=False`, loading raises `ValueError` for unusable sex when
+  no X-linked gene is marked; when an X-linked gene is marked, the loader
+  accepts the row and stores the uppercased raw sex text. Only the upload path
+  opts into `allow_unknown_sex=True`, which stores blank or unrecognized sex as
+  `""`. In every case `rank_pairs` excludes animals whose sex is not M or F.
 - The CLI warns when an unmarked gene has genotypes in `X/Y` form. Untargeted
   X-linked lethals affect joint survival and are not ignored; untargeted
   autosomal lethals remain ignored with a note.
@@ -236,6 +243,59 @@ SWE internships. I want to understand everything.
   can make map distance exceed the observed recombination fraction.
 - Linked pairs and unpaired genes are treated as independent groups.
 - Latest full-suite result after 6c: 280 tests passed.
+
+## Decisions made in step 7b-1
+- `UploadLoadResult` carries the loaded `animals`, warnings grouped by key,
+  `unknown_sex_count`, `unknown_sex_ids`, selected-gene `distinct_values`, and
+  an optional `error_message`.
+- `guess_column_mapping(fieldnames)` guesses colony fields by normalizing
+  headers to lowercase alphanumeric characters and matching known aliases.
+  Optional cage and parent fields default to `"(none)"`; required animal ID
+  and sex fields without a match return `None`.
+- `guess_sex_value_mapping(rows, sex_column)` guesses only `m`/`male` as M and
+  `f`/`female` as F. Every other distinct value, including blank, defaults to
+  unknown (`""`).
+- `summarize_distinct_values(rows, columns, limit=50)` lists distinct values in
+  first-seen order, displays blanks as `"(blank)"`, and appends `"+N more"`
+  when distinct values exceed the limit.
+- `build_loader_args(...)` validates that selections still exist in the
+  current headers and that mapped fields use distinct columns. `"(none)"` for
+  cage or parent fields injects a blank column under a reserved name; a
+  collision with that reserved name is an error. It returns copied rows, the
+  mapping, the `first_data_row` offset, `gene_columns=[]`, and
+  `allow_unknown_sex=True`.
+- `load_from_upload(...)` validates selections and sex mappings, loads colony
+  structure, collects upload and pedigree warnings, counts unknown-sex animals
+  and returns their IDs, and summarizes selected gene-column values. It returns
+  validation errors in `error_message`.
+- Only `m`/`male` and `f`/`female` are guessed as M and F. Everything else,
+  including blank values, defaults to unknown. Every distinct sex-column value
+  must have an explicit mapping. A mapping for a value no longer present in
+  the upload is stale and raises an error; a current value without a mapping
+  also raises an error.
+- `load_colony_rows` defaults to `allow_unknown_sex=False`. With no X-linked
+  gene marked, the default loader still rejects unusable sex. Only the upload
+  helper opts into `allow_unknown_sex=True`, which stores blank or
+  unrecognized sex as `""`.
+- `build_loader_args` returns `gene_columns=[]` on purpose, and
+  `load_from_upload` consequently loads structure only. Genotypes are **not
+  loaded in 7b-1**: selected gene columns are summarized for review but not
+  parsed. Step 7c must reload the colony with target, lethal, X-linked, and
+  linked genes, plus phase columns, before ranking. The commit messages record
+  no rationale for the empty gene list; the evidence is the tests only,
+  including the assertion that loader arguments contain no gene columns and
+  the fake-CSV test that loads junk genotype text such as `"not-a-genotype"` in
+  a selected gene column without error.
+- Animal IDs are trimmed but duplicate checks are case-sensitive: `"m01"` and
+  `"M01"` are different animals. This is a limitation if a lab expects
+  case-insensitive uniqueness.
+- `first_data_row` is the 1-based source row of the first record after the header (`header_row + 1`), and loader error row numbers count from it. Interior blank rows are kept as blank records in both the XLSX and CSV readers, and the loader skips them only after advancing its row counter, so later row numbers match the source. Trailing blank rows are trimmed. Tests: the XLSX and CSV interior-blank-row tests in `tests/test_upload.py` assert `Row 5 is missing an animal_id`. Not tested: for CSV, rows are counted as records, so a quoted cell containing a line break would make the row number differ from the physical line number. XLSX date/time warnings use worksheet row numbers.
+- `ui_helpers.py` and `upload.py` do not import Streamlit; their upload and
+  mapping logic can be tested independently of the UI.
+- Upload warnings with structured column metadata are grouped by column name;
+  warnings without a column use the `"Upload"` key. These keys can collide with
+  app-generated groups named `"Pedigree"`, `"Cage"`, `"Relatedness"`, or
+  `"Upload"` if an upload column has the same name.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
