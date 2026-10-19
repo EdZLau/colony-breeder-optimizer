@@ -9,5 +9,8 @@ dist/
 .DS_Store
 # Real lab data may be unpublished. Never commit it by accident.
 # Only the fake sample file in data/ is meant to be tracked.
+*.csv
+*.xlsx
+review.txt
 data/*
 !data/sample_mice.csv

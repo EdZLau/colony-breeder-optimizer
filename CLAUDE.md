@@ -56,19 +56,13 @@ SWE internships. I want to understand everything.
 - probability_of_target accepts one genotype or a collection of genotypes.
 - Alleles are case-sensitive strings.
 
-## Environment
-- Windows, PowerShell, Python 3.14, virtualenv in .venv
-  (activate: .venv\Scripts\Activate.ps1). Install: pip install -e ".[dev]"
-- Run tests: pytest
-- Layout: src/colony_breeder/core/ (genetics), tests/, data/sample_mice.csv (fake data)
-- Real lab data must never be committed (see .gitignore).
-- Always run tests with: .venv\Scripts\python -m pytest   (the assistant's terminal does not auto-activate the venv)
-   ## Decisions made in step 3c
-   - rank_pairs multiplies per-gene probabilities (Fractions). ASSUMES target genes are unlinked; linked genes are step 6.
-   - RankedPair.per_gene holds each gene's probability. A lethal list applies only to its own gene; a lethal entry for an untargeted gene is validated but ignored.
-   - A blank genotype in ANY targeted gene skips the pair; blanks in untargeted genes do not.
-   - Performance idea for later: cache probability by (gene, male genotype, female genotype).
-   ## Decisions made in step 3d
+## Decisions made in step 3c
+- `rank_pairs` multiplies per-gene probabilities (Fractions). ASSUMES target genes are unlinked; linked genes are step 6.
+- `RankedPair.per_gene` holds each gene's probability. A lethal list applies only to its own gene; a lethal entry for an untargeted gene is validated but ignored.
+- A blank genotype in ANY targeted gene skips the pair; blanks in untargeted genes do not.
+- Performance idea for later: cache probability by (gene, male genotype, female genotype).
+
+## Decisions made in step 3d
 - Flags: full_siblings, half_siblings_mother, half_siblings_father,
   parent_offspring, same_cage. Blank IDs/cages never match.
 - half_siblings_* means "at least half" if a parent ID is blank.
@@ -76,9 +70,28 @@ SWE internships. I want to understand everything.
 - Checks one generation only; grandparent/cousin links are not detected
   (limitation; see step 9 inbreeding coefficient).
 - Missing genotype skip takes precedence; skipped pairs keep their flags.
-   ## Decisions made in step 3e
+
+## Decisions made in step 3e
 - pedigree_warnings returns (severity, message) entries; warnings identify
   detectable pedigree inconsistencies and info identifies parent IDs absent
   from the colony.
 - Pedigree warnings are separate from pair ranking and do not change flags or
   probabilities.
+- Parent loops are checked only between two animals; cycles involving three
+  or more animals are not detected.
+- A missing parent ID is informational, not a warning, because retired
+  breeders are often absent from the current colony.
+
+## Biological assumptions
+- Genes are treated as autosomal until step 5 adds X-linked genetics.
+- Target genes are treated as unlinked until step 6 adds linkage.
+- Every animal is assumed to be a fertile, available breeder. For example,
+  real `ob/ob` mice are infertile; the sample data ignores fertility.
+
+## Environment
+- Windows, PowerShell, Python 3.14, virtualenv in .venv
+  (activate: .venv\Scripts\Activate.ps1). Install: pip install -e ".[dev]"
+- Run tests: pytest
+- Layout: src/colony_breeder/core/ (genetics), tests/, data/sample_mice.csv (fake data)
+- Real lab data must never be committed (see .gitignore).
+- Always run tests with: .venv\Scripts\python -m pytest   (the assistant's terminal does not auto-activate the venv)

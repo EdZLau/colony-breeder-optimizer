@@ -96,7 +96,15 @@ def load_colony(
         seen_ids = set()
 
         for row_index, row in enumerate(reader, start=2):
-            if not any((value or "").strip() for value in row.values() if value is not None):
+            extra_values = row.get(None, [])
+            if any(value.strip() for value in extra_values if value is not None):
+                raise ValueError(f"Row {row_index} has more values than headers.")
+
+            if not any(
+                (value or "").strip()
+                for key, value in row.items()
+                if key is not None and value is not None
+            ):
                 continue
 
             raw_id = (row.get(resolved_mapping["animal_id"], "") or "").strip()
@@ -188,17 +196,18 @@ def pedigree_warnings(colony: Sequence[Animal]) -> List[Tuple[str, str]]:
                     )
                 )
                 continue
+            if parent_id == animal_id:
+                continue
             if parent.sex != expected_sex:
                 warnings.append(
                     (
                         "warning",
                         f"Animal {animal_id!r} has {field_name} {parent_id!r}; "
-                        f"the recorded parent sex is {parent.sex!r}, expected {expected_sex!r}.",
+                        f"the recorded parent sex is {parent.sex!r}, expected {expected_sex!r}; "
+                        f"check {parent_id!r}.sex or {animal_id!r}.{field_name}.",
                     )
                 )
 
-            if parent_id == animal_id:
-                continue
             parent_mother_id = parent.mother_id.strip()
             parent_father_id = parent.father_id.strip()
             reciprocal_fields = []

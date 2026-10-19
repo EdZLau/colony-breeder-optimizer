@@ -192,6 +192,47 @@ def test_load_colony_skips_rows_where_every_field_is_blank(tmp_path):
     assert [animal.animal_id for animal in colony] == ["M01"]
 
 
+def test_load_colony_ignores_blank_extra_values_after_headers(tmp_path):
+    csv_path = tmp_path / "blank_extra_values.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+,, \n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(csv_path, gene_columns=["Cre"])
+
+    assert len(colony) == 1
+    assert colony[0].animal_id == "M01"
+    assert colony[0].genotypes["Cre"] == "Cre/+"
+
+
+def test_load_colony_rejects_nonblank_extra_values_with_row_number(tmp_path):
+    csv_path = tmp_path / "nonblank_extra_values.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+,unexpected\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"Row 2 has more values than headers"):
+        load_colony(csv_path, gene_columns=["Cre"])
+
+
+def test_load_colony_skips_fully_blank_row_with_trailing_comma(tmp_path):
+    csv_path = tmp_path / "blank_trailing_extra.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+\n"
+        ",,,,,,\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(csv_path, gene_columns=["Cre"])
+
+    assert [animal.animal_id for animal in colony] == ["M01"]
+
+
 def test_load_colony_skips_rows_with_only_whitespace_and_commas(tmp_path):
     csv_path = tmp_path / "whitespace_blank_row.csv"
     csv_path.write_text(
@@ -242,10 +283,6 @@ def test_pedigree_warnings_detects_animal_listed_as_own_parent(tmp_path):
 
     assert pedigree_warnings(colony) == [
         ("warning", "Animal 'M01' lists itself in mother_id."),
-        (
-            "warning",
-            "Animal 'M01' has mother_id 'M01'; the recorded parent sex is 'M', expected 'F'.",
-        ),
     ]
 
 
@@ -266,7 +303,8 @@ def test_pedigree_warnings_detects_same_id_as_both_parents(tmp_path):
         ),
         (
             "warning",
-            "Animal 'M01' has mother_id 'P01'; the recorded parent sex is 'M', expected 'F'.",
+            "Animal 'M01' has mother_id 'P01'; the recorded parent sex is 'M', expected 'F'; "
+            "check 'P01'.sex or 'M01'.mother_id.",
         ),
     ]
 
@@ -284,7 +322,8 @@ def test_pedigree_warnings_detects_mother_with_non_female_sex(tmp_path):
     assert pedigree_warnings(colony) == [
         (
             "warning",
-            "Animal 'F01' has mother_id 'P01'; the recorded parent sex is 'M', expected 'F'.",
+            "Animal 'F01' has mother_id 'P01'; the recorded parent sex is 'M', expected 'F'; "
+            "check 'P01'.sex or 'F01'.mother_id.",
         )
     ]
 
@@ -302,7 +341,8 @@ def test_pedigree_warnings_detects_father_with_non_male_sex(tmp_path):
     assert pedigree_warnings(colony) == [
         (
             "warning",
-            "Animal 'F01' has father_id 'P01'; the recorded parent sex is 'F', expected 'M'.",
+            "Animal 'F01' has father_id 'P01'; the recorded parent sex is 'F', expected 'M'; "
+            "check 'P01'.sex or 'F01'.father_id.",
         )
     ]
 

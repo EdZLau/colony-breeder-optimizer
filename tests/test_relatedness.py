@@ -131,6 +131,13 @@ def test_same_cage_flag_requires_a_nonblank_shared_cage():
     assert pair_flags(_animal("M01", "M"), _animal("F01", "F")) == []
 
 
+def test_spaces_only_cage_and_parent_ids_are_blank():
+    male = _animal("M01", "M", mother_id="   ", father_id="  ", cage="   ")
+    female = _animal("F01", "F", mother_id=" ", father_id=" ", cage=" ")
+
+    assert pair_flags(male, female) == []
+
+
 def test_sample_colony_relationship_and_cage_flags_match_expected_pairs():
     colony = load_colony(SAMPLE, gene_columns=["Cre"])
     males = [animal for animal in colony if animal.sex == "M"]
