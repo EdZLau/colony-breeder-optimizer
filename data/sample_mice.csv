@@ -1,0 +1,13 @@
+animal_id,sex,cage,mother_id,father_id,Cre,Ob,Agouti
+M01,M,C1,,,Cre/+,ob/+,Ay/a
+M02,M,C2,,,+/+,ob/+,a/a
+F01,F,C1,,,Cre/+,ob/+,Ay/a
+F02,F,C3,,,+/+,ob/+,a/a
+M03,M,C4,F01,M01,Cre/+,ob/ob,Ay/a
+F03,F,C4,F01,M01,+/+,+/+,a/a
+F04,F,C5,F01,M01,Cre/Cre,ob/+,Ay/a
+M04,M,C6,F02,M02,+/+,ob/ob,a/a
+F05,F,C7,F02,M02,+/+,ob/+,a/a
+M05,M,C8,F01,M02,Cre/+,+/+,Ay/a
+F06,F,C9,,,,ob/+,a/a
+F07,F,C10,,,Cre/+,+/+,a/a

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+# Real lab data may be unpublished. Never commit it by accident.
+# Only the fake sample file in data/ is meant to be tracked.
+data/*
+!data/sample_mice.csv
