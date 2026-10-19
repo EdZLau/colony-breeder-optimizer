@@ -336,6 +336,19 @@ SWE internships. I want to understand everything.
   when the app dependency is not installed.
 - Full-suite result after step 7b-2: 374 tests passed.
 
+### Known limitations (step 7b-2)
+- Multi-sheet XLSX handling (sheet picker) has not been tested in the browser or
+  in AppTest.
+- Only CSV and XLSX are accepted, up to 10 MB.
+- Read-upload warnings appear with the load result, not during preview.
+- The wrong-sex-column guard triggers only above 20 distinct values; a wrong
+  column in a small colony still shows a mapping table and Load stays enabled.
+- Sex widget keys are `sex_widget_<raw value>`, so a choice can carry over when
+  the sex column changes to one containing the same raw value.
+- Load is disabled when no sex column is chosen or the mapping table is
+  undisplayable.
+- The 374 test count was reported by Copilot; re-run pytest to confirm.
+
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
   (activate: .venv\Scripts\Activate.ps1). Install: pip install -e ".[dev]"
