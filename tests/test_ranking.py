@@ -797,6 +797,342 @@ def test_unusable_sex_animals_are_reported_but_never_paired():
     assert autosomal_result.notes == x_linked_result.notes
 
 
+def _linked_animal(animal_id, sex, genotypes, phase):
+    return Animal(
+        animal_id=animal_id,
+        sex=sex,
+        cage="",
+        mother_id="",
+        father_id="",
+        genotypes=genotypes,
+        phases={("A", "B"): phase} if phase is not None else {},
+    )
+
+
+def test_linked_coupling_and_repulsion_phases_change_target_probability():
+    coupling_animals = [
+        _linked_animal(
+            "M01",
+            "M",
+            {"A": "A/a", "B": "B/b"},
+            "A|B/a|b",
+        ),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+    repulsion_animals = [
+        _linked_animal(
+            "M01",
+            "M",
+            {"A": "A/a", "B": "B/b"},
+            "A|b/a|B",
+        ),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+    settings = {
+        "target": {"A": "A/a", "B": "B/b"},
+        "linked_pairs": [("A", "B", "1/10")],
+    }
+
+    coupling = rank_pairs(coupling_animals, **settings)
+    repulsion = rank_pairs(repulsion_animals, **settings)
+
+    assert coupling.ranked[0].probability == Fraction(9, 20)
+    assert repulsion.ranked[0].probability == Fraction(1, 20)
+    assert coupling.ranked[0].linked_pair_probabilities == {
+        ("A", "B"): Fraction(9, 20)
+    }
+
+
+def test_linked_pair_missing_phase_skip_and_missing_genotype_precedence():
+    missing_phase = [
+        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, None),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+    missing_genotype = [
+        _linked_animal("M02", "M", {"A": "A/a", "B": ""}, None),
+        _linked_animal("F02", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+    args = {
+        "target": {"A": "A/a"},
+        "linked_pairs": [("A", "B", "1/10")],
+    }
+
+    phase_result = rank_pairs(missing_phase, **args)
+    genotype_result = rank_pairs(missing_genotype, **args)
+
+    assert phase_result.ranked == []
+    assert phase_result.skipped[0].kind == "missing_phase"
+    assert all(
+        text in phase_result.skipped[0].reason
+        for text in ("M01", "A", "B")
+    )
+    assert genotype_result.ranked == []
+    assert genotype_result.skipped[0].kind == "missing_genotype"
+    assert all(
+        text in genotype_result.skipped[0].reason
+        for text in ("M02", "B")
+    )
+
+
+def test_linked_pair_probability_multiplies_independent_autosomal_target():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b", "C": "C/+"},
+            {("A", "B"): "A|B/a|b"},
+        ),
+        Animal(
+            "F01",
+            "F",
+            "",
+            "",
+            "",
+            {"A": "a/a", "B": "b/b", "C": "C/+"},
+            {},
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a", "B": "B/b", "C": "C/+"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked[0].linked_pair_probabilities == {
+        ("A", "B"): Fraction(9, 20)
+    }
+    assert result.ranked[0].per_gene == {
+        "A": Fraction(1, 2),
+        "B": Fraction(1, 2),
+        "C": Fraction(1, 2),
+    }
+    assert result.ranked[0].probability == Fraction(9, 40)
+
+
+def test_linked_pair_probability_multiplies_x_linked_group_target():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b", "X1": "A/Y", "X2": "A/Y"},
+            {("A", "B"): "A|B/a|b"},
+        ),
+        Animal(
+            "F01",
+            "F",
+            "",
+            "",
+            "",
+            {"A": "a/a", "B": "b/b", "X1": "A/a", "X2": "A/a"},
+            {},
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a", "B": "B/b", "X2": "a/Y"},
+        lethal={"X1": ["a/Y"]},
+        x_linked_genes=["X1", "X2"],
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked[0].probability == Fraction(3, 40)
+    assert result.ranked[0].linked_pair_probabilities[("A", "B")] == Fraction(9, 20)
+
+
+def test_linked_untargeted_partner_lethal_conditions_joint_probability():
+    animals = [
+        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a"},
+        lethal={"B": "b/b"},
+        linked_pairs=[("A", "B", 0)],
+    )
+
+    assert result.ranked[0].probability == Fraction(1)
+    assert result.ranked[0].linked_pair_probabilities[("A", "B")] == Fraction(1)
+    assert result.ranked[0].per_gene == {"A": Fraction(1)}
+
+
+def test_untargeted_lethal_only_linked_pair_has_factor_one_when_survivors_exist():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b", "C": "C/+"},
+            {("A", "B"): "A|B/a|b"},
+        ),
+        Animal(
+            "F01",
+            "F",
+            "",
+            "",
+            "",
+            {"A": "a/a", "B": "b/b", "C": "C/+"},
+            {},
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"C": "C/+"},
+        lethal={"B": "b/b"},
+        linked_pairs=[("A", "B", 0)],
+    )
+
+    assert result.ranked[0].linked_pair_probabilities[("A", "B")] == Fraction(1)
+    assert result.ranked[0].probability == Fraction(1, 2)
+
+
+def test_linked_pair_at_half_recombination_matches_unlinked_ranking():
+    animals = [
+        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+    target = {"A": "A/a", "B": "B/b"}
+
+    linked = rank_pairs(
+        animals,
+        target=target,
+        linked_pairs=[("A", "B", Fraction(1, 2))],
+    )
+    unlinked = rank_pairs(animals, target=target)
+
+    assert linked.ranked[0].probability == Fraction(1, 4)
+    assert linked.ranked[0].probability == unlinked.ranked[0].probability
+
+
+def test_linked_all_offspring_lethal_is_skipped():
+    animals = [
+        _linked_animal("M01", "M", {"A": "A/A", "B": "B/B"}, None),
+        _linked_animal("F01", "F", {"A": "A/A", "B": "B/B"}, None),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/A"},
+        lethal={"A": "A/A"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked == []
+    assert len(result.skipped) == 1
+    assert result.skipped[0].kind == "all_lethal"
+    assert "A" in result.skipped[0].reason
+    assert "B" in result.skipped[0].reason
+
+
+def test_targeted_linked_gene_contributes_joint_factor_only_once():
+    animals = [
+        _linked_animal("M01", "M", {"A": "A/a", "B": "B/b"}, "A|B/a|b"),
+        _linked_animal("F01", "F", {"A": "a/a", "B": "b/b"}, None),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    pair = result.ranked[0]
+    assert pair.linked_pair_probabilities[("A", "B")] == Fraction(1, 2)
+    assert pair.per_gene == {"A": Fraction(1, 2)}
+    assert pair.probability == Fraction(1, 2)
+
+
+def test_linked_pair_supports_reversed_configured_gene_order():
+    animals = [
+        Animal(
+            "M01",
+            "M",
+            "",
+            "",
+            "",
+            {"A": "A/a", "B": "B/b"},
+            {("B", "A"): "B|A/b|a"},
+        ),
+        Animal("F01", "F", "", "", "", {"A": "a/a", "B": "b/b"}, {}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"A": "A/a", "B": "B/b"},
+        linked_pairs=[("B", "A", "1/10")],
+    )
+
+    assert result.ranked[0].probability == Fraction(9, 20)
+    assert result.ranked[0].linked_pair_probabilities == {
+        ("B", "A"): Fraction(9, 20)
+    }
+
+
+@pytest.mark.parametrize(
+    ("linked_pairs", "x_linked_genes", "message"),
+    [
+        ([("A", "A", "1/10")], [], "Linked pair.*'A'.*'A'.*same gene twice"),
+        (
+            [("A", "B", "1/10"), ("B", "A", "1/10")],
+            [],
+            "Linked pair.*'B'.*'A'.*another linked pair",
+        ),
+        ([("A", "B", "1/10")], ["B"], "Linked pair.*'A'.*'B'.*X-linked"),
+        (
+            [("A", "Missing", "1/10")],
+            [],
+            "Linked pair.*'A'.*'Missing'.*not present in the colony",
+        ),
+        ([("A", "B", "3/4")], [], "recombination frequency.*'A'.*'B'"),
+        ([("A", "B", 0.1)], [], "recombination frequency.*'A'.*'B'"),
+        ([("A", "B", True)], [], "recombination frequency.*'A'.*'B'"),
+    ],
+)
+def test_rank_pairs_rejects_invalid_linked_pair_configuration(
+    linked_pairs, x_linked_genes, message
+):
+    animals = [
+        _animal("M01", "M", {"A": "A/a", "B": "B/b"}),
+        _animal("F01", "F", {"A": "A/a", "B": "B/b"}),
+    ]
+
+    with pytest.raises(ValueError, match=message):
+        rank_pairs(
+            animals,
+            target={"A": "A/a"},
+            x_linked_genes=x_linked_genes,
+            linked_pairs=linked_pairs,
+        )
+
+
+def test_inactive_linked_pair_does_not_require_genotypes_or_phase():
+    animals = [
+        _animal("M01", "M", {"Cre": "Cre/+", "A": "", "B": ""}),
+        _animal("F01", "F", {"Cre": "+/+", "A": "", "B": ""}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"Cre": "Cre/+"},
+        linked_pairs=[("A", "B", "1/10")],
+    )
+
+    assert result.ranked[0].probability == Fraction(1, 2)
+    assert result.ranked[0].linked_pair_probabilities == {}
+
+
 def test_missing_genotype_skip_precedes_relatedness_and_unknown_sex_is_reported():
     animals = [
         Animal("M01", "M", "", "F00", "M00", {"X": ""}),
