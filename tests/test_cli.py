@@ -485,6 +485,47 @@ def test_autosomal_sample_run_has_no_unmarked_xlinked_warning(capsys):
     assert "Warning: gene " not in output.out
 
 
+def test_sample_xgene_cli_command_ranks_expected_top_pair(capsys):
+    assert main(
+        [
+            str(SAMPLE),
+            "--xlinked",
+            "Xgene",
+            "--target",
+            "Xgene=a/a",
+            "--lethal",
+            "Xgene=a/Y",
+        ]
+    ) == 0
+
+    output = capsys.readouterr()
+    assert "M02" in output.out
+    ranked_lines = [
+        line for line in output.out.splitlines()
+        if line.startswith("   1  ")
+    ]
+    assert len(ranked_lines) == 1
+    assert ranked_lines[0].split() == [
+        "1",
+        "M02",
+        "F03",
+        "1",
+        "1.0000",
+        "-",
+        "Xgene=1",
+    ]
+    assert "X-linked per-gene probabilities are descriptive marginal" in output.out
+
+
+def test_sample_autosomal_only_run_has_no_xlinked_output_or_warning(capsys):
+    assert main([str(SAMPLE), "--target", "Cre=Cre/Cre"]) == 0
+
+    output = capsys.readouterr()
+    assert "X-linked per_gene" not in output.out
+    assert "X-linked per-gene probabilities" not in output.out
+    assert "Warning: gene " not in output.out
+
+
 def test_cli_prints_excluded_animals_with_five_example_limit(tmp_path, capsys):
     csv_path = tmp_path / "unknown_sexes.csv"
     rows = [

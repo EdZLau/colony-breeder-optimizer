@@ -520,6 +520,47 @@ def test_sample_colony_ob_and_agouti_targets_skip_no_pairs():
     assert result.skipped == []
 
 
+@pytest.mark.parametrize(
+    ("male_id", "female_id", "target", "without_lethal", "with_lethal"),
+    [
+        ("M01", "F01", "a/Y", Fraction(1, 4), Fraction(0)),
+        ("M02", "F01", "a/a", Fraction(1, 4), Fraction(1, 3)),
+        ("M04", "F05", "a/a", Fraction(1, 2), Fraction(1)),
+    ],
+)
+def test_sample_xgene_hand_calculated_probabilities(
+    male_id, female_id, target, without_lethal, with_lethal
+):
+    colony = load_colony(
+        SAMPLE,
+        gene_columns=["Xgene"],
+        x_linked_genes=["Xgene"],
+    )
+
+    plain = rank_pairs(
+        colony,
+        target={"Xgene": target},
+        x_linked_genes=["Xgene"],
+    )
+    lethal = rank_pairs(
+        colony,
+        target={"Xgene": target},
+        lethal={"Xgene": ["a/Y"]},
+        x_linked_genes=["Xgene"],
+    )
+
+    def find_pair(result):
+        return next(
+            pair
+            for pair in result.ranked
+            if pair.male.animal_id == male_id
+            and pair.female.animal_id == female_id
+        )
+
+    assert find_pair(plain).probability == without_lethal
+    assert find_pair(lethal).probability == with_lethal
+
+
 def test_x_linked_joint_target_and_lethal_probability_is_one_sixth():
     animals = [
         _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
