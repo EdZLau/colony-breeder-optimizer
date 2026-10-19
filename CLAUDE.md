@@ -36,10 +36,10 @@ SWE internships. I want to understand everything.
 3. Colony loading from CSV, rank all male x female pairs, multiple unlinked genes,
    sibling/cage flags, pedigree warnings, with tests (DONE)
 4. CLI (--target GENE=GENOTYPE, --lethal, --top, --exclude-related) (DONE)
-5. X-linked genes (males have one copy)  <-- NEXT
+5. X-linked genes (males have one copy) (DONE)
 6. Linked genes: recombination frequency per gene pair, each animal's phase
    (HB/hb vs Hb/hB), parental gametes (1-r)/2, recombinant gametes r/2,
-   tests vs known values (10 map units = 10% recombinant)
+   tests vs known values (10 map units = 10% recombinant)  <-- NEXT
 7. Streamlit app: upload .xlsx/.csv without reformatting; dropdowns to map ID, sex,
    cage, mother, father, each gene; per-gene settings table for symbol meanings and
    target genotypes; lethal/sibling/linkage options; downloadable ranked table; note
@@ -83,8 +83,10 @@ SWE internships. I want to understand everything.
   breeders are often absent from the current colony.
 
 ## Biological assumptions
-- Genes are treated as autosomal until step 5 adds X-linked genetics.
-- Target genes are treated as unlinked until step 6 adds linkage.
+- Autosomal and X-linked inheritance are supported. Multiple target genes are
+  treated as unlinked until step 6 adds linkage.
+- X-linked genes are treated as non-pseudoautosomal; X-inactivation and
+  sex-specific viability apart from listed lethal genotypes are not modeled.
 - Every animal is assumed to be a fertile, available breeder. For example,
   real `ob/ob` mice are infertile; the sample data ignores fertility.
 
@@ -101,10 +103,37 @@ SWE internships. I want to understand everything.
   text encoding advises saving the file as UTF-8 CSV.
 - Pedigree warnings and results go to stdout; errors go to stderr. Exit codes
   are 0 for success, 1 for data errors, and 2 for command-line usage errors.
-- Zero-probability pairs are hidden by default. A lethal setting for a
-  non-target gene is ignored with an explanatory note.
+- Zero-probability pairs are hidden by default. An untargeted autosomal lethal
+  setting is ignored with an explanatory note; untargeted X-linked lethals
+  affect joint survival (see step 5).
 - The CLI uses default column names only; configurable column mapping is
   deferred to step 7.
+
+## Decisions made in step 5
+- X-linked genes are marked by gene name with `x_linked_genes` in
+  `load_colony` and `rank_pairs`, or repeatable CLI `--xlinked GENE`; there is
+  no per-row marker. Males use `A/Y`, females use `A/a`; male `/y` is normalized
+  to `/Y`. Internal allele tuples are sorted (so `Y` may sort before lowercase
+  alleles); use `format_x_linked_genotype` to display the Y last.
+- X-linked offspring use a joint (sex, genotype) distribution with a 1:1 sex
+  ratio at conception. Lethals are removed and renormalized once over the
+  joint distribution, including lethals on untargeted X-linked genes.
+- For each sex `s`, `weight_s = 1/2 × product(surviving mass)` over all
+  X-linked genes. `target_s` uses target mass for targeted genes and surviving
+  mass for untargeted genes. Overall X-linked probability is
+  `(target_F + target_M) / (weight_F + weight_M)`.
+- X-linked `per_gene` probabilities are descriptive marginals among survivors
+  and must not be multiplied. Multiple X-linked genes are treated as unlinked
+  (`r = 1/2`), an approximation until step 6.
+- Animals with blank or unrecognized sex are excluded from pairing and
+  reported through `excluded_animals` and `notes`. Loading with unusable sex
+  still raises when no X-linked gene is marked.
+- The CLI warns when an unmarked gene has genotypes in `X/Y` form. Untargeted
+  X-linked lethals affect joint survival and are not ignored; untargeted
+  autosomal lethals remain ignored with a note.
+- `data/sample_mice.csv` includes an `Xgene` column with fake demonstration
+  genotypes.
+- Latest full-suite result: 178 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
