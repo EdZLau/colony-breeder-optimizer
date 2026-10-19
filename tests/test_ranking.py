@@ -518,3 +518,260 @@ def test_sample_colony_ob_and_agouti_targets_skip_no_pairs():
 
     assert len(result.ranked) == 35
     assert result.skipped == []
+
+
+def test_x_linked_joint_target_and_lethal_probability_is_one_sixth():
+    animals = [
+        _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
+        _animal("F01", "F", {"X1": "A/a", "X2": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X2": ["a/Y"]},
+        lethal={"X1": ["a/Y"]},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    pair = result.ranked[0]
+    assert pair.probability == Fraction(1, 6)
+    assert pair.per_gene["X2"] == Fraction(1, 6)
+
+
+def test_x_linked_target_probability_uses_joint_surviving_sex_branches():
+    animals = [
+        _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
+        _animal("F01", "F", {"X1": "A/a", "X2": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={
+            "X1": ["A/A", "A/a"],
+            "X2": ["A/a"],
+        },
+        lethal={"X1": ["A/Y", "a/Y"]},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    assert result.ranked[0].probability == Fraction(1, 2)
+    assert result.ranked[0].per_gene == {
+        "X1": Fraction(1),
+        "X2": Fraction(1, 2),
+    }
+
+
+def test_untargeted_x_linked_lethal_shifts_another_genes_target_probability():
+    animals = [
+        _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
+        _animal("F01", "F", {"X1": "A/a", "X2": "A/a"}),
+    ]
+
+    without_lethal = rank_pairs(
+        animals,
+        target={"X2": "A/a"},
+        x_linked_genes=["X1", "X2"],
+    )
+    with_untargeted_lethal = rank_pairs(
+        animals,
+        target={"X2": "A/a"},
+        lethal={"X1": ["A/Y", "a/Y"]},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    assert without_lethal.ranked[0].probability == Fraction(1, 4)
+    assert with_untargeted_lethal.ranked[0].probability == Fraction(1, 2)
+    assert with_untargeted_lethal.ranked[0].per_gene["X2"] == Fraction(1, 2)
+
+
+def test_mixed_sex_targets_across_x_linked_genes_have_zero_probability():
+    animals = [
+        _animal("M01", "M", {"X1": "a/Y", "X2": "a/Y"}),
+        _animal("F01", "F", {"X1": "a/a", "X2": "a/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X1": "a/a", "X2": "a/Y"},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    assert result.ranked[0].probability == Fraction(0)
+
+
+def test_both_sex_targets_use_joint_survival_conditioning():
+    animals = [
+        _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
+        _animal("F01", "F", {"X1": "A/a", "X2": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={
+            "X1": ["a/a", "a/Y"],
+            "X2": ["a/a", "a/Y"],
+        },
+        lethal={"X1": ["A/A"], "X2": ["A/Y"]},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    # Joint survivors have mass 1/4 in each sex; the joint target mass is
+    # 1/8 in sons, so its probability among survivors is 1/4.
+    assert result.ranked[0].probability == Fraction(1, 4)
+
+
+def test_x_linked_and_autosomal_targets_are_multiplied():
+    animals = [
+        _animal("M01", "M", {"X": "A/Y", "Cre": "Cre/+"}),
+        _animal("F01", "F", {"X": "A/a", "Cre": "Cre/+"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X": "a/Y", "Cre": "Cre/Cre"},
+        x_linked_genes=["X"],
+    )
+
+    assert result.ranked[0].per_gene == {
+        "Cre": Fraction(1, 4),
+        "X": Fraction(1, 4),
+    }
+    assert result.ranked[0].probability == Fraction(1, 16)
+
+
+def test_per_gene_keys_follow_target_order_for_mixed_autosomal_and_x_linked_genes():
+    animals = [
+        _animal("M01", "M", {"X": "A/Y", "Cre": "Cre/+", "Ob": "ob/+"}),
+        _animal("F01", "F", {"X": "A/a", "Cre": "Cre/+", "Ob": "ob/+"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={
+            "X": "a/Y",
+            "Ob": "ob/ob",
+            "Cre": "Cre/Cre",
+        },
+        x_linked_genes=["X"],
+    )
+
+    assert list(result.ranked[0].per_gene) == ["X", "Ob", "Cre"]
+
+
+@pytest.mark.parametrize(
+    ("animal_id", "sex", "genotype"),
+    [
+        ("M01", "M", "A/a"),
+        ("F01", "F", "A/Y"),
+    ],
+)
+def test_rank_pairs_rejects_invalid_animal_x_linked_genotype(
+    animal_id, sex, genotype
+):
+    animals = [
+        _animal("M01", "M", {"X": "A/Y", "Cre": "Cre/+"}),
+        _animal("F01", "F", {"X": "A/a", "Cre": "Cre/+"}),
+    ]
+    invalid_animal = next(animal for animal in animals if animal.animal_id == animal_id)
+    invalid_animal.genotypes["X"] = genotype
+
+    with pytest.raises(
+        ValueError,
+        match=rf"Invalid X-linked genotype for animal '{animal_id}' in gene 'X'",
+    ):
+        rank_pairs(
+            animals,
+            target={"Cre": "Cre/+"},
+            x_linked_genes=["X"],
+        )
+
+
+def test_all_sons_lethal_but_daughters_survive_yields_zero_ranked_probability():
+    animals = [
+        _animal("M01", "M", {"X1": "A/Y", "X2": "A/Y"}),
+        _animal("F01", "F", {"X1": "A/a", "X2": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X2": "a/Y"},
+        lethal={"X1": ["A/Y", "a/Y"]},
+        x_linked_genes=["X1", "X2"],
+    )
+
+    assert len(result.ranked) == 1
+    assert result.ranked[0].probability == Fraction(0)
+    assert result.skipped == []
+
+
+def test_all_x_linked_offspring_lethal_is_skipped_with_all_lethal_kind():
+    animals = [
+        _animal("M01", "M", {"X": "A/Y"}),
+        _animal("F01", "F", {"X": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X": "A/A"},
+        lethal={"X": ["A/A", "A/a", "A/Y", "a/Y"]},
+        x_linked_genes=["X"],
+    )
+
+    assert result.ranked == []
+    assert len(result.skipped) == 1
+    assert result.skipped[0].kind == "all_lethal"
+    assert "X" in result.skipped[0].reason
+
+
+def test_unusable_sex_animals_are_reported_but_never_paired():
+    animals = [
+        _animal("M01", "M", {"X": "A/Y", "Cre": "Cre/+"}),
+        _animal("F01", "F", {"X": "A/a", "Cre": "+/+"}),
+        _animal("U01", "?", {"X": "A/a", "Cre": "Cre/+"}),
+    ]
+
+    autosomal_result = rank_pairs(animals, target={"Cre": "Cre/+"})
+    x_linked_result = rank_pairs(
+        animals,
+        target={"X": "A/a"},
+        x_linked_genes=["X"],
+    )
+
+    for result in (autosomal_result, x_linked_result):
+        assert len(result.ranked) == 1
+        assert (result.ranked[0].male.animal_id, result.ranked[0].female.animal_id) == (
+            "M01",
+            "F01",
+        )
+        assert result.skipped == []
+        assert len(result.excluded_animals) == 1
+        assert result.excluded_animals[0].animal_id == "U01"
+        assert result.excluded_animals[0].reason == (
+            "sex is blank or unrecognized, so it can't be assigned a male or female role"
+        )
+        assert result.notes == [
+            "Some animals were excluded because sex is blank or unrecognized, "
+            "so they can't be assigned a male or female role."
+        ]
+    assert autosomal_result.notes == x_linked_result.notes
+
+
+def test_missing_genotype_skip_precedes_relatedness_and_unknown_sex_is_reported():
+    animals = [
+        Animal("M01", "M", "", "F00", "M00", {"X": ""}),
+        Animal("F01", "F", "", "F00", "M00", {"X": "A/a"}),
+        _animal("U01", "", {"X": "A/a"}),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"X": "A/a"},
+        x_linked_genes=["X"],
+        exclude_related=True,
+    )
+
+    assert result.ranked == []
+    assert len(result.skipped) == 1
+    assert result.skipped[0].kind == "missing_genotype"
+    assert result.skipped[0].reason.startswith("Missing genotype")
+    assert [item.animal_id for item in result.excluded_animals] == ["U01"]
