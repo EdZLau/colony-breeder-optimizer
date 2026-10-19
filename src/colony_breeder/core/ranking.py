@@ -31,6 +31,7 @@ class SkippedPair:
     male: Animal
     female: Animal
     reason: str
+    kind: str
     flags: List[str] = field(default_factory=list)
 
 
@@ -116,6 +117,7 @@ def rank_pairs(
                         + "; ".join(missing_details)
                         + "."
                     ),
+                    kind="missing_genotype",
                     flags=flags,
                 )
             )
@@ -144,6 +146,7 @@ def rank_pairs(
                     male=male,
                     female=female,
                     reason="Excluded: " + ", ".join(labels[flag] for flag in excluded_flags),
+                    kind="excluded_related",
                     flags=flags,
                 )
             )
@@ -167,6 +170,7 @@ def rank_pairs(
                             f"All offspring are lethal for gene {gene!r} from "
                             f"male {male.animal_id} and female {female.animal_id}."
                         ),
+                        kind="all_lethal",
                         flags=flags,
                     )
                 )

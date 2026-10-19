@@ -147,6 +147,7 @@ def test_rank_pairs_skips_missing_target_genotype_with_animal_and_gene_reason():
     assert len(result.skipped) == 1
     skipped = result.skipped[0]
     assert (skipped.male.animal_id, skipped.female.animal_id) == ("M01", "F02")
+    assert skipped.kind == "missing_genotype"
     assert "F02" in skipped.reason
     assert "Cre" in skipped.reason
 
@@ -175,6 +176,7 @@ def test_missing_genotype_skip_still_includes_relationship_and_cage_flags():
 
     assert result.ranked == []
     assert result.skipped[0].flags == ["full_siblings", "same_cage"]
+    assert result.skipped[0].kind == "missing_genotype"
 
 
 def test_missing_genotype_skip_takes_precedence_over_related_exclusion():
@@ -206,6 +208,7 @@ def test_missing_genotype_skip_takes_precedence_over_related_exclusion():
     assert result.ranked == []
     assert len(result.skipped) == 1
     assert result.skipped[0].reason.startswith("Missing genotype")
+    assert result.skipped[0].kind == "missing_genotype"
     assert result.skipped[0].flags == ["full_siblings", "same_cage"]
 
 
@@ -229,6 +232,7 @@ def test_rank_pairs_skips_blank_target_genotypes_and_names_animals_and_gene(
     assert result.ranked == []
     assert len(result.skipped) == 1
     reason = result.skipped[0].reason
+    assert result.skipped[0].kind == "missing_genotype"
     assert all(animal_id in reason for animal_id in expected_animals)
     assert "Cre" in reason
 
@@ -330,6 +334,7 @@ def test_pair_with_all_offspring_lethal_is_skipped_with_animal_and_gene_reason()
     assert result.ranked == []
     assert len(result.skipped) == 1
     reason = result.skipped[0].reason
+    assert result.skipped[0].kind == "all_lethal"
     assert "M01" in reason
     assert "F02" in reason
     assert "Agouti" in reason
@@ -351,6 +356,16 @@ def test_exclude_related_skips_exactly_twelve_sample_pairs_with_flags():
         if pair.reason.startswith("Excluded:")
     }
     assert len(excluded_pairs) == 12
+    assert all(
+        pair.kind == "excluded_related"
+        for pair in result.skipped
+        if pair.reason.startswith("Excluded:")
+    )
+    assert all(
+        pair.kind == "excluded_related"
+        for pair in result.skipped
+        if pair.reason.startswith("Excluded:")
+    )
     assert excluded_pairs == {
         ("M03", "F03"),
         ("M03", "F04"),

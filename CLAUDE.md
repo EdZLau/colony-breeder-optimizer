@@ -35,8 +35,8 @@ SWE internships. I want to understand everything.
 2. Core genetics, one autosomal gene (DONE)
 3. Colony loading from CSV, rank all male x female pairs, multiple unlinked genes,
    sibling/cage flags, pedigree warnings, with tests (DONE)
-4. CLI (--target GENE=GENOTYPE, --lethal, --top, --exclude-related)  <-- NEXT
-5. X-linked genes (males have one copy)
+4. CLI (--target GENE=GENOTYPE, --lethal, --top, --exclude-related) (DONE)
+5. X-linked genes (males have one copy)  <-- NEXT
 6. Linked genes: recombination frequency per gene pair, each animal's phase
    (HB/hb vs Hb/hB), parental gametes (1-r)/2, recombinant gametes r/2,
    tests vs known values (10 map units = 10% recombinant)
@@ -87,6 +87,24 @@ SWE internships. I want to understand everything.
 - Target genes are treated as unlinked until step 6 adds linkage.
 - Every animal is assumed to be a fertile, available breeder. For example,
   real `ob/ob` mice are infertile; the sample data ignores fertility.
+
+## Decisions made in step 4
+- CLI is in `colony_breeder.cli`; `main(argv=None)` parses and prints, then
+  calls the core APIs without implementing genetics.
+- `--target` is required and repeatable; repeated values for one gene are
+  alternative target genotypes. Target and lethal genes are deduplicated when
+  selecting genotype columns to load.
+- `--top` must be at least 1. Zero-probability pairs are hidden and counted;
+  skipped pairs are categorized and show five examples unless
+  `--show-skipped` is supplied.
+- CLI errors are concise stderr messages with a nonzero exit code; invalid
+  text encoding advises saving the file as UTF-8 CSV.
+- Pedigree warnings and results go to stdout; errors go to stderr. Exit codes
+  are 0 for success, 1 for data errors, and 2 for command-line usage errors.
+- Zero-probability pairs are hidden by default. A lethal setting for a
+  non-target gene is ignored with an explanatory note.
+- The CLI uses default column names only; configurable column mapping is
+  deferred to step 7.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
