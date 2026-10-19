@@ -3,7 +3,7 @@
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from colony_breeder.core.genetics import parse_genotype
 
@@ -143,3 +143,81 @@ def load_colony(
             )
 
     return animals
+
+
+def pedigree_warnings(colony: Sequence[Animal]) -> List[Tuple[str, str]]:
+    """Return (severity, message) entries for detectable pedigree issues."""
+    animals_by_id = {animal.animal_id.strip(): animal for animal in colony}
+    warnings = []
+    reported_loops = set()
+
+    for animal in colony:
+        animal_id = animal.animal_id.strip()
+        mother_id = animal.mother_id.strip()
+        father_id = animal.father_id.strip()
+
+        if mother_id and mother_id == animal_id:
+            warnings.append(
+                ("warning", f"Animal {animal_id!r} lists itself in mother_id.")
+            )
+        if father_id and father_id == animal_id:
+            warnings.append(
+                ("warning", f"Animal {animal_id!r} lists itself in father_id.")
+            )
+        if mother_id and mother_id == father_id:
+            warnings.append(
+                (
+                    "warning",
+                    f"Animal {animal_id!r} has the same ID in mother_id and father_id.",
+                )
+            )
+
+        for field_name, parent_id, expected_sex in (
+            ("mother_id", mother_id, "F"),
+            ("father_id", father_id, "M"),
+        ):
+            if not parent_id:
+                continue
+            parent = animals_by_id.get(parent_id)
+            if parent is None:
+                warnings.append(
+                    (
+                        "info",
+                        f"Animal {animal_id!r} has {field_name} {parent_id!r}, "
+                        "which is not in the colony.",
+                    )
+                )
+                continue
+            if parent.sex != expected_sex:
+                warnings.append(
+                    (
+                        "warning",
+                        f"Animal {animal_id!r} has {field_name} {parent_id!r}; "
+                        f"the recorded parent sex is {parent.sex!r}, expected {expected_sex!r}.",
+                    )
+                )
+
+            if parent_id == animal_id:
+                continue
+            parent_mother_id = parent.mother_id.strip()
+            parent_father_id = parent.father_id.strip()
+            reciprocal_fields = []
+            if parent_mother_id == animal_id:
+                reciprocal_fields.append("mother_id")
+            if parent_father_id == animal_id:
+                reciprocal_fields.append("father_id")
+            if reciprocal_fields:
+                loop = tuple(sorted((animal_id, parent_id)))
+                if loop not in reported_loops:
+                    reported_loops.add(loop)
+                    reciprocal_field = reciprocal_fields[0]
+                    warnings.append(
+                        (
+                            "warning",
+                            f"Animals {loop[0]!r} and {loop[1]!r} form a two-animal "
+                            f"parent loop; check {animal_id!r}.{field_name} and "
+                            f"{parent_id!r}.{reciprocal_field}.",
+                        )
+                    )
+
+    return warnings

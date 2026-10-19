@@ -34,8 +34,8 @@ SWE internships. I want to understand everything.
 1. Project setup (DONE)
 2. Core genetics, one autosomal gene (DONE)
 3. Colony loading from CSV, rank all male x female pairs, multiple unlinked genes,
-   sibling/cage flags, with tests  <-- NEXT
-4. CLI (--target GENE=GENOTYPE, --lethal, --top, --exclude-siblings)
+   sibling/cage flags, pedigree warnings, with tests (DONE)
+4. CLI (--target GENE=GENOTYPE, --lethal, --top, --exclude-related)  <-- NEXT
 5. X-linked genes (males have one copy)
 6. Linked genes: recombination frequency per gene pair, each animal's phase
    (HB/hb vs Hb/hB), parental gametes (1-r)/2, recombinant gametes r/2,
@@ -68,3 +68,17 @@ SWE internships. I want to understand everything.
    - RankedPair.per_gene holds each gene's probability. A lethal list applies only to its own gene; a lethal entry for an untargeted gene is validated but ignored.
    - A blank genotype in ANY targeted gene skips the pair; blanks in untargeted genes do not.
    - Performance idea for later: cache probability by (gene, male genotype, female genotype).
+   ## Decisions made in step 3d
+- Flags: full_siblings, half_siblings_mother, half_siblings_father,
+  parent_offspring, same_cage. Blank IDs/cages never match.
+- half_siblings_* means "at least half" if a parent ID is blank.
+- Exclusion covers all related flags except same_cage (CLI: --exclude-related).
+- Checks one generation only; grandparent/cousin links are not detected
+  (limitation; see step 9 inbreeding coefficient).
+- Missing genotype skip takes precedence; skipped pairs keep their flags.
+   ## Decisions made in step 3e
+- pedigree_warnings returns (severity, message) entries; warnings identify
+  detectable pedigree inconsistencies and info identifies parent IDs absent
+  from the colony.
+- Pedigree warnings are separate from pair ranking and do not change flags or
+  probabilities.

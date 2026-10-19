@@ -151,6 +151,64 @@ def test_rank_pairs_skips_missing_target_genotype_with_animal_and_gene_reason():
     assert "Cre" in skipped.reason
 
 
+def test_missing_genotype_skip_still_includes_relationship_and_cage_flags():
+    animals = [
+        Animal(
+            animal_id="M01",
+            sex="M",
+            cage="C1",
+            mother_id="F00",
+            father_id="M00",
+            genotypes={"Cre": ""},
+        ),
+        Animal(
+            animal_id="F01",
+            sex="F",
+            cage="C1",
+            mother_id="F00",
+            father_id="M00",
+            genotypes={"Cre": "Cre/+"},
+        ),
+    ]
+
+    result = rank_pairs(animals, target={"Cre": "Cre/+"})
+
+    assert result.ranked == []
+    assert result.skipped[0].flags == ["full_siblings", "same_cage"]
+
+
+def test_missing_genotype_skip_takes_precedence_over_related_exclusion():
+    animals = [
+        Animal(
+            animal_id="M01",
+            sex="M",
+            cage="C1",
+            mother_id="F00",
+            father_id="M00",
+            genotypes={"Cre": ""},
+        ),
+        Animal(
+            animal_id="F01",
+            sex="F",
+            cage="C1",
+            mother_id="F00",
+            father_id="M00",
+            genotypes={"Cre": "Cre/+"},
+        ),
+    ]
+
+    result = rank_pairs(
+        animals,
+        target={"Cre": "Cre/+"},
+        exclude_related=True,
+    )
+
+    assert result.ranked == []
+    assert len(result.skipped) == 1
+    assert result.skipped[0].reason.startswith("Missing genotype")
+    assert result.skipped[0].flags == ["full_siblings", "same_cage"]
+
+
 @pytest.mark.parametrize(
     ("male_genotype", "female_genotype", "expected_animals"),
     [
@@ -276,6 +334,63 @@ def test_pair_with_all_offspring_lethal_is_skipped_with_animal_and_gene_reason()
     assert "F02" in reason
     assert "Agouti" in reason
     assert "lethal" in reason
+
+
+def test_exclude_related_skips_exactly_twelve_sample_pairs_with_flags():
+    colony = load_colony(SAMPLE, gene_columns=["Cre"])
+
+    result = rank_pairs(
+        colony,
+        target={"Cre": ["Cre/Cre"]},
+        exclude_related=True,
+    )
+
+    excluded_pairs = {
+        (pair.male.animal_id, pair.female.animal_id)
+        for pair in result.skipped
+        if pair.reason.startswith("Excluded:")
+    }
+    assert len(excluded_pairs) == 12
+    assert excluded_pairs == {
+        ("M03", "F03"),
+        ("M03", "F04"),
+        ("M04", "F05"),
+        ("M05", "F03"),
+        ("M05", "F04"),
+        ("M05", "F05"),
+        ("M01", "F03"),
+        ("M01", "F04"),
+        ("M02", "F05"),
+        ("M03", "F01"),
+        ("M04", "F02"),
+        ("M05", "F01"),
+    }
+    assert all(pair.flags for pair in result.skipped if pair.reason.startswith("Excluded:"))
+    excluded = [pair for pair in result.skipped if pair.reason.startswith("Excluded:")]
+    assert sum("full_siblings" in pair.flags for pair in excluded) == 3
+    assert sum("half_siblings_mother" in pair.flags for pair in excluded) == 2
+    assert sum("half_siblings_father" in pair.flags for pair in excluded) == 1
+    assert sum("parent_offspring" in pair.flags for pair in excluded) == 6
+    assert (
+        sum("full_siblings" in pair.flags for pair in excluded)
+        + sum("half_siblings_mother" in pair.flags for pair in excluded)
+        + sum("half_siblings_father" in pair.flags for pair in excluded)
+        + sum("parent_offspring" in pair.flags for pair in excluded)
+        == 12
+    )
+    assert {pair.reason for pair in result.skipped if pair.reason.startswith("Excluded:")} == {
+        "Excluded: full siblings",
+        "Excluded: maternal half siblings",
+        "Excluded: paternal half siblings",
+        "Excluded: parent-offspring",
+    }
+
+    same_cage_only_pair = next(
+        pair
+        for pair in result.ranked
+        if pair.male.animal_id == "M01" and pair.female.animal_id == "F01"
+    )
+    assert same_cage_only_pair.flags == ["same_cage"]
 
 
 @pytest.mark.parametrize(

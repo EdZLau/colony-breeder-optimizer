@@ -1,6 +1,6 @@
 """Generate and rank male x female breeding pairs."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
@@ -10,6 +10,7 @@ from colony_breeder.core.genetics import (
     parse_genotype,
     probability_of_target,
 )
+from colony_breeder.core.relatedness import pair_flags
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class RankedPair:
     female: Animal
     probability: Fraction
     per_gene: Dict[str, Fraction]
+    flags: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class SkippedPair:
     male: Animal
     female: Animal
     reason: str
+    flags: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,7 @@ def rank_pairs(
     animals: Sequence[Animal],
     target: Mapping[str, Union[str, Iterable[str]]],
     lethal: Optional[Mapping[str, Union[str, Iterable[str]]]] = None,
+    exclude_related: bool = False,
 ) -> PairRankingResult:
     """Rank pairs by the probability of producing all targeted genotypes.
 
@@ -87,6 +91,7 @@ def rank_pairs(
     skipped: List[SkippedPair] = []
 
     for male, female in generate_pairs(animals):
+        flags = pair_flags(male, female)
         missing_by_gene = {}
         for gene in targets:
             missing = []
@@ -111,6 +116,35 @@ def rank_pairs(
                         + "; ".join(missing_details)
                         + "."
                     ),
+                    flags=flags,
+                )
+            )
+            continue
+
+        excluded_flags = [
+            flag
+            for flag in flags
+            if flag
+            in {
+                "full_siblings",
+                "half_siblings_mother",
+                "half_siblings_father",
+                "parent_offspring",
+            }
+        ]
+        if exclude_related and excluded_flags:
+            labels = {
+                "full_siblings": "full siblings",
+                "half_siblings_mother": "maternal half siblings",
+                "half_siblings_father": "paternal half siblings",
+                "parent_offspring": "parent-offspring",
+            }
+            skipped.append(
+                SkippedPair(
+                    male=male,
+                    female=female,
+                    reason="Excluded: " + ", ".join(labels[flag] for flag in excluded_flags),
+                    flags=flags,
                 )
             )
             continue
@@ -133,6 +167,7 @@ def rank_pairs(
                             f"All offspring are lethal for gene {gene!r} from "
                             f"male {male.animal_id} and female {female.animal_id}."
                         ),
+                        flags=flags,
                     )
                 )
                 break
@@ -146,6 +181,7 @@ def rank_pairs(
                     female=female,
                     probability=probability,
                     per_gene=per_gene,
+                    flags=flags,
                 )
             )
 
