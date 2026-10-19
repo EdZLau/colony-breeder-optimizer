@@ -3,7 +3,7 @@
 import argparse
 import csv
 import sys
-from typing import List, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 from colony_breeder.core.colony import load_colony, pedigree_warnings
 from colony_breeder.core.ranking import PairRankingResult, rank_pairs
@@ -93,7 +93,10 @@ def _print_results(result: PairRankingResult, top: Optional[int], show_skipped: 
 
     print("Assumptions: autosomal genes; target genes unlinked; all animals fertile and available.")
     if not nonzero_pairs:
-        print("No pair can produce the target.")
+        if not result.skipped:
+            print("No pair can produce the target.")
+        elif not result.ranked:
+            print("No pairs could be evaluated (see skipped pairs below).")
     print("Ranked pairs:")
     print(
         f"{'Rank':>4}  {'Male':<12}  {'Female':<12}  "

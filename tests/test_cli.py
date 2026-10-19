@@ -139,6 +139,22 @@ def test_main_suggests_utf8_for_non_utf8_csv(tmp_path, capsys):
     assert output.out == ""
 
 
+def test_main_reports_csv_parser_error_without_traceback(tmp_path, capsys):
+    csv_path = tmp_path / "nul_byte.csv"
+    csv_path.write_bytes(
+        b"animal_id,sex,cage,mother_id,father_id,Cre\n"
+        b"M01,M,C1,,,\x00\n"
+    )
+
+    assert main([str(csv_path), "--target", "Cre=Cre/+"]) == 1
+
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err.startswith("Error:")
+    assert output.err.count("\n") == 1
+    assert "Traceback" not in output.err
+
+
 def test_main_prints_pedigree_warnings_before_ranked_table(tmp_path, capsys):
     csv_path = tmp_path / "pedigree_warning.csv"
     csv_path.write_text(
@@ -205,7 +221,7 @@ def test_show_skipped_prints_all_skips_and_empty_rankable_result(tmp_path, capsy
     assert "Skipped pairs: 5" in output.out
     assert "all offspring lethal=5" in output.out
     assert output.out.count("All offspring are lethal") == 5
-    assert "No pair can produce the target." in output.out
+    assert "No pairs could be evaluated (see skipped pairs below)." in output.out
     assert "Showing 0 of 0 pairs with nonzero probability" in output.out
 
 
