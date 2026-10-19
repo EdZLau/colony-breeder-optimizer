@@ -48,6 +48,57 @@ def test_load_colony_rejects_missing_required_columns(tmp_path):
         load_colony(str(csv_path), gene_columns=["Cre"])
 
 
+def test_load_colony_supports_non_default_column_mapping(tmp_path):
+    csv_path = tmp_path / "mapped_headers.csv"
+    csv_path.write_text(
+        "Mouse ID,Gender,Cage No,Dam,Sire,Cre\n"
+        "M01,M,C1,F02,M02,Cre/+\n",
+        encoding="utf-8",
+    )
+    mapping = {
+        "animal_id": "Mouse ID",
+        "sex": "Gender",
+        "cage": "Cage No",
+        "mother_id": "Dam",
+        "father_id": "Sire",
+    }
+
+    colony = load_colony(csv_path, column_mapping=mapping, gene_columns=["Cre"])
+
+    assert len(colony) == 1
+    assert colony[0].animal_id == "M01"
+    assert colony[0].sex == "M"
+    assert colony[0].cage == "C1"
+    assert colony[0].mother_id == "F02"
+    assert colony[0].father_id == "M02"
+    assert colony[0].genotypes["Cre"] == "Cre/+"
+
+
+def test_load_colony_names_missing_mapped_header(tmp_path):
+    csv_path = tmp_path / "missing_mapped_header.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,F02,M02,Cre/+\n",
+        encoding="utf-8",
+    )
+    mapping = {"animal_id": "Mouse ID"}
+
+    with pytest.raises(ValueError, match="Required columns missing.*Mouse ID"):
+        load_colony(csv_path, column_mapping=mapping, gene_columns=["Cre"])
+
+
+def test_load_colony_reports_missing_gene_column_and_available_columns(tmp_path):
+    csv_path = tmp_path / "missing_gene.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Genotype\n"
+        "M01,M,C1,,,Cre/+\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"Cre.*Available columns:.*Genotype"):
+        load_colony(csv_path, gene_columns=["Cre"])
+
+
 def test_load_colony_rejects_invalid_or_blank_sex(tmp_path):
     csv_path = tmp_path / "bad_sex.csv"
     csv_path.write_text(
@@ -101,6 +152,18 @@ def test_load_colony_validates_all_non_blank_genotypes_and_names_the_animal_and_
         load_colony(str(csv_path), gene_columns=["Cre"])
 
 
+def test_load_colony_includes_genotype_parser_error_in_message(tmp_path):
+    csv_path = tmp_path / "bad_genotype_detail.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre+\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"Invalid genotype.*Cannot read genotype 'Cre\+'"):
+        load_colony(csv_path, gene_columns=["Cre"])
+
+
 def test_load_colony_keeps_blank_genotypes_as_unknown_values(tmp_path):
     csv_path = tmp_path / "blank_genotype.csv"
     csv_path.write_text(
@@ -113,6 +176,46 @@ def test_load_colony_keeps_blank_genotypes_as_unknown_values(tmp_path):
     mouse = colony[0]
     assert mouse.genotypes["Cre"] == ""
     assert mouse.genotypes["Ob"] == ""
+
+
+def test_load_colony_skips_rows_where_every_field_is_blank(tmp_path):
+    csv_path = tmp_path / "trailing_blank_row.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+\n"
+        ",,,,,\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(csv_path, gene_columns=["Cre"])
+
+    assert [animal.animal_id for animal in colony] == ["M01"]
+
+
+def test_load_colony_skips_rows_with_only_whitespace_and_commas(tmp_path):
+    csv_path = tmp_path / "whitespace_blank_row.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+\n"
+        " , , , , ,\n",
+        encoding="utf-8",
+    )
+
+    colony = load_colony(csv_path, gene_columns=["Cre"])
+
+    assert [animal.animal_id for animal in colony] == ["M01"]
+
+
+def test_load_colony_rejects_duplicate_gene_column_names(tmp_path):
+    csv_path = tmp_path / "duplicate_gene_names.csv"
+    csv_path.write_text(
+        "animal_id,sex,cage,mother_id,father_id,Cre\n"
+        "M01,M,C1,,,Cre/+\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate gene name.*Cre"):
+        load_colony(csv_path, gene_columns=["Cre", " Cre "])
 
 
 def test_load_colony_accepts_bom_prefixed_files(tmp_path):

@@ -45,6 +45,8 @@ def _validate_gene_columns(gene_columns: Optional[Sequence[str]]) -> List[str]:
         text = str(gene).strip()
         if not text:
             raise ValueError("gene_columns contains an empty gene name.")
+        if text in columns:
+            raise ValueError(f"gene_columns contains duplicate gene name {text!r}.")
         columns.append(text)
     return columns
 
@@ -81,10 +83,22 @@ def load_colony(
                 "Required columns missing from the CSV: " + ", ".join(sorted(set(missing_columns)))
             )
 
+        missing_gene_columns = [gene for gene in gene_names if gene not in reader.fieldnames]
+        if missing_gene_columns:
+            raise ValueError(
+                "Requested gene column(s) missing from the CSV: "
+                + ", ".join(missing_gene_columns)
+                + ". Available columns: "
+                + ", ".join(reader.fieldnames)
+            )
+
         animals: List[Animal] = []
         seen_ids = set()
 
         for row_index, row in enumerate(reader, start=2):
+            if not any((value or "").strip() for value in row.values() if value is not None):
+                continue
+
             raw_id = (row.get(resolved_mapping["animal_id"], "") or "").strip()
             if not raw_id:
                 raise ValueError(f"Row {row_index} is missing an animal_id.")
@@ -112,7 +126,8 @@ def load_colony(
                         parse_genotype(cleaned)
                     except ValueError as exc:
                         raise ValueError(
-                            f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: {cleaned!r}"
+                            f"Invalid genotype for animal {raw_id!r} in column {gene_name!r}: "
+                            f"{cleaned!r}. {exc}"
                         ) from exc
                 genotypes[gene_name] = cleaned
 
