@@ -3,7 +3,7 @@
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Union
+from typing import Dict, List, Mapping, Optional, Sequence, Union
 
 from colony_breeder.core.genetics import parse_genotype
 

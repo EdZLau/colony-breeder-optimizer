@@ -17,6 +17,10 @@ Genotype = Tuple[str, str]
 Distribution = Dict[Genotype, Fraction]
 
 
+class AllOffspringLethalError(ValueError):
+    """Raised when a cross has no surviving offspring."""
+
+
 def parse_genotype(text: str) -> Genotype:
     """Turn text like "Aa", "aA", "Cre/+" or "+/Cre" into a sorted allele pair.
 
@@ -77,7 +81,9 @@ def remove_lethal(distribution: Distribution, lethal: Iterable[str] = ()) -> Dis
 
     total = sum(survivors.values(), Fraction(0))
     if total == 0:
-        raise ValueError("Every possible offspring genotype is lethal; nothing survives.")
+        raise AllOffspringLethalError(
+            "Every possible offspring genotype is lethal; nothing survives."
+        )
 
     return {g: p / total for g, p in survivors.items()}
 

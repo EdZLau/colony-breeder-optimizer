@@ -5,6 +5,7 @@ web app. Interfaces call into this package, never the other way around.
 """
 from colony_breeder.core.colony import Animal, load_colony
 from colony_breeder.core.genetics import (
+    AllOffspringLethalError,
     format_genotype,
     gametes,
     offspring_distribution,
@@ -12,14 +13,27 @@ from colony_breeder.core.genetics import (
     probability_of_target,
     remove_lethal,
 )
+from colony_breeder.core.ranking import (
+    PairRankingResult,
+    RankedPair,
+    SkippedPair,
+    generate_pairs,
+    rank_pairs,
+)
 
 __all__ = [
     "Animal",
+    "AllOffspringLethalError",
+    "PairRankingResult",
+    "RankedPair",
+    "SkippedPair",
     "format_genotype",
     "gametes",
+    "generate_pairs",
     "load_colony",
     "offspring_distribution",
     "parse_genotype",
     "probability_of_target",
+    "rank_pairs",
     "remove_lethal",
 ]

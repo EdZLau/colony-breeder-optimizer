@@ -4,6 +4,7 @@ from fractions import Fraction
 import pytest
 
 from colony_breeder.core import (
+    AllOffspringLethalError,
     format_genotype,
     gametes,
     offspring_distribution,
@@ -139,7 +140,7 @@ def test_a_single_lethal_string_is_accepted():
 
 
 def test_if_everything_is_lethal_we_raise_an_error():
-    with pytest.raises(ValueError, match="lethal"):
+    with pytest.raises(AllOffspringLethalError, match="lethal"):
         offspring_distribution("Ay/Ay", "Ay/Ay", lethal=["Ay/Ay"])
 
 
