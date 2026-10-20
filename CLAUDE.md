@@ -57,11 +57,11 @@ SWE internships. I want to understand everything.
      (DONE).
    - 7c-3: Wire ranking to an explicit button and display the run result (DONE).
    - 7d: Add a downloadable ranked table and a clear note that uploaded data
-     is not stored.
-     <-- NEXT
+     is not stored (DONE).
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 479 tests passed.
+     <-- NEXT
+   - Latest full-suite result: 489 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -498,6 +498,32 @@ SWE internships. I want to understand everything.
   error state.
 - Full-suite result after the step 7c-3 error-persistence fix-up: 479 tests
   passed.
+
+## Decisions made in step 7d
+- The CSV download contains every nonzero ranked pair in core ranking order,
+  regardless of display-only top N. It is shown only alongside a current,
+  successful result and uses the fixed filename `ranked_pairs.csv`.
+- CSV probability is exported as separate numerator and denominator columns
+  plus a decimal column; fractions are not written as a single cell that Excel
+  could misinterpret as a date. Formula-leading text cells receive a leading
+  apostrophe. UTF-8 with BOM supports Excel and non-ASCII animal IDs.
+- An errored result or a result with no nonzero pairs produces a valid
+  header-only CSV. Streamlit 1.66.0 supports `on_click="ignore"` for the
+  download button, so downloading does not rerun the page or ranking.
+- The per-gene column retains descriptive tags for linked/X-linked marginals;
+  these must not be multiplied. Linked-pair joint factors remain in their own
+  column. `ranked_pairs_csv(result, settings)` uses the settings directly to
+  identify descriptive genes, without inspecting the result signature.
+- CSV rows use empty cells when flags, per-gene values, or linked-pair factors
+  are absent; the on-page table keeps its existing `-` display placeholder.
+- The app-code search found upload bytes are read in memory and no app-side
+  file writes, temporary files, `st.cache_*`, logging, or row-data `print`
+  calls. No app code persists upload contents to disk. The single note says
+  that uploads stay in memory for the session and are not saved to disk, cached,
+  or logged; hosted copies process them on the host server, so users with
+  sensitive data should run locally. It is shown directly above the file
+  uploader, including before any upload.
+- Full-suite result after step 7d fix-up: 489 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv

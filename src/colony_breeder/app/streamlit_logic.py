@@ -1,9 +1,11 @@
 """Pure presentation logic for the Streamlit upload workflow."""
 
+import csv
 from copy import deepcopy
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from io import StringIO
+from typing import Dict, List, Mapping, Optional, Sequence, Set, Tuple
 
 from colony_breeder.app.ui_helpers import (
     NONE_COLUMN,
@@ -314,18 +316,24 @@ def format_flags(flags: Sequence[str]) -> str:
     return ", ".join(flags) if flags else "-"
 
 
+def _descriptive_gene_names(settings: RunSettings) -> Set[str]:
+    """Return genes whose per-gene probabilities are descriptive marginals."""
+    genes = set(settings.x_linked_genes)
+    genes.update(
+        gene
+        for gene1, gene2, _, _ in settings.linked_pairs
+        for gene in (gene1, gene2)
+    )
+    return genes
+
+
 def ranked_pair_rows(
     result: RunResult,
     settings: RunSettings,
 ) -> List[Dict[str, str]]:
     """Build display rows for visible pairs, preserving the core ranking order."""
     shown_pairs, _, _ = visible_ranked(result, settings.top)
-    descriptive_genes = set(settings.x_linked_genes)
-    descriptive_genes.update(
-        gene
-        for gene1, gene2, _, _ in settings.linked_pairs
-        for gene in (gene1, gene2)
-    )
+    descriptive_genes = _descriptive_gene_names(settings)
     rows = []
     for pair in shown_pairs:
         per_gene = "; ".join(
@@ -352,6 +360,65 @@ def ranked_pair_rows(
             }
         )
     return rows
+
+
+_RANKED_PAIRS_CSV_HEADER = (
+    "male",
+    "female",
+    "probability_numerator",
+    "probability_denominator",
+    "probability_decimal",
+    "flags",
+    "per_gene",
+    "linked_pair_factors",
+)
+
+
+def _spreadsheet_safe_text(value: str) -> str:
+    """Prefix formula-leading text so spreadsheet programs treat it as text."""
+    if value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return "'" + value
+    return value
+
+
+def ranked_pairs_csv(result: RunResult, settings: RunSettings) -> bytes:
+    """Export every nonzero ranked pair, independent of the display top limit."""
+    output = StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(_RANKED_PAIRS_CSV_HEADER)
+
+    if result.error_message is None:
+        ranked_pairs, _, _ = visible_ranked(result, top=None)
+        descriptive_genes = _descriptive_gene_names(settings)
+        for pair in ranked_pairs:
+            per_gene = "; ".join(
+                f"{gene}={probability}"
+                + (
+                    " (descriptive) (do not multiply)"
+                    if gene in descriptive_genes
+                    else ""
+                )
+                for gene, probability in pair.per_gene
+            )
+            linked_factors = "; ".join(
+                f"{gene1},{gene2}={format_fraction_with_decimal(probability)}"
+                for (gene1, gene2), probability in pair.linked_pair_probabilities
+            )
+            flags = format_flags(pair.flags) if pair.flags else ""
+            writer.writerow(
+                (
+                    _spreadsheet_safe_text(pair.male_id),
+                    _spreadsheet_safe_text(pair.female_id),
+                    pair.probability.numerator,
+                    pair.probability.denominator,
+                    float(pair.probability),
+                    _spreadsheet_safe_text(flags) if flags else "",
+                    _spreadsheet_safe_text(per_gene) if per_gene else "",
+                    _spreadsheet_safe_text(linked_factors) if linked_factors else "",
+                )
+            )
+
+    return output.getvalue().encode("utf-8-sig")
 
 
 def run_result_summary(result: RunResult, top: Optional[int]) -> Tuple[str, ...]:

@@ -19,6 +19,7 @@ from colony_breeder.app.streamlit_logic import (
     input_signature,
     phase_column_options,
     preview_rows,
+    ranked_pairs_csv,
     ranked_pair_rows,
     run_result_summary,
     sex_mapping_check,
@@ -70,6 +71,11 @@ _SETTINGS_WIDGET_PREFIXES = (
 _STRUCTURE_NOTICE = (
     "Colony structure is loaded. Genotypes are parsed and validated when you "
     "run ranking."
+)
+_DATA_HANDLING_NOTICE = (
+    "This app keeps the upload in memory for the session and does not save it "
+    "to disk, cache it, or log it. On a hosted copy, the data is processed on "
+    "the host's server; if you have sensitive data, run the app locally."
 )
 
 
@@ -214,6 +220,13 @@ def _display_run_result(result: RunResult, settings: RunSettings) -> None:
 
     for note in result.notes:
         st.info(note)
+    st.download_button(
+        "Download all nonzero ranked pairs (CSV)",
+        data=ranked_pairs_csv(result, settings),
+        file_name="ranked_pairs.csv",
+        mime="text/csv",
+        on_click="ignore",
+    )
     if result.pedigree_warnings:
         st.markdown("**Pedigree warnings**")
         for severity, message in result.pedigree_warnings:
@@ -643,10 +656,7 @@ def _choose_workbook_sheet() -> None:
 def main() -> None:
     st.set_page_config(page_title="Colony Breeder Upload")
     st.title("Load colony data")
-    st.caption(
-        "Uploads are processed in memory and are not stored. For sensitive data, "
-        "run the app locally."
-    )
+    st.caption(_DATA_HANDLING_NOTICE)
 
     uploaded_file = st.file_uploader(
         "Upload a colony CSV or XLSX file",

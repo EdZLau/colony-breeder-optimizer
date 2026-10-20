@@ -1,5 +1,7 @@
+import csv
 from dataclasses import FrozenInstanceError
 from fractions import Fraction
+from io import StringIO
 
 import pytest
 
@@ -20,6 +22,7 @@ from colony_breeder.app.streamlit_logic import (
     input_signature,
     phase_column_options,
     preview_rows,
+    ranked_pairs_csv,
     ranked_pair_rows,
     run_result_summary,
     sex_mapping_check,
@@ -487,6 +490,137 @@ def test_ranking_formatters_preserve_probabilities_messages_flags_and_all_rows()
     assert "missing_genotype=0" in summary[6]
     assert "missing_phase=1" in summary[6]
     assert "all_lethal=1" in summary[6]
+
+
+def test_ranked_pairs_csv_exports_all_nonzero_pairs_and_preserves_exact_values():
+    settings = build_run_settings(
+        targets={"A": "A/A"},
+        x_linked_genes=["Xgene"],
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+        top=1,
+    )
+    result = RunResult(
+        ranked=(
+            RankedPairView(
+                "=M01",
+                "Fé01",
+                Fraction(1, 2),
+                (
+                    ("A", Fraction(1, 2)),
+                    ("B", Fraction(1, 4)),
+                    ("Xgene", Fraction(1, 3)),
+                    ("C", Fraction(1, 5)),
+                ),
+                ((("A", "B"), Fraction(1, 2)),),
+                ("full_siblings",),
+            ),
+            RankedPairView(
+                "-M02",
+                "F02",
+                Fraction(1, 3),
+                (),
+                (),
+                (),
+            ),
+            RankedPairView(
+                "M03",
+                "F03",
+                Fraction(0),
+                (),
+                (),
+                (),
+            ),
+        ),
+        skipped=(),
+        excluded_animals=(),
+        notes=(),
+        pedigree_warnings=(),
+        signature=None,
+        error_message=None,
+    )
+
+    content = ranked_pairs_csv(result, settings)
+
+    assert content.startswith(b"\xef\xbb\xbf")
+    rows = list(csv.DictReader(StringIO(content.decode("utf-8-sig"), newline="")))
+    assert list(rows[0]) == [
+        "male",
+        "female",
+        "probability_numerator",
+        "probability_denominator",
+        "probability_decimal",
+        "flags",
+        "per_gene",
+        "linked_pair_factors",
+    ]
+    assert len(rows) == 2
+    assert [row["male"] for row in rows] == ["'=M01", "'-M02"]
+    assert [row["probability_numerator"] for row in rows] == ["1", "1"]
+    assert [row["probability_denominator"] for row in rows] == ["2", "3"]
+    assert [row["probability_decimal"] for row in rows] == ["0.5", str(1 / 3)]
+    assert rows[0]["flags"] == "full_siblings"
+    assert "A=1/2 (descriptive) (do not multiply)" in rows[0]["per_gene"]
+    assert "B=1/4 (descriptive) (do not multiply)" in rows[0]["per_gene"]
+    assert "Xgene=1/3 (descriptive) (do not multiply)" in rows[0]["per_gene"]
+    assert "C=1/5" in rows[0]["per_gene"]
+    assert "C=1/5 (descriptive)" not in rows[0]["per_gene"]
+    assert "A,B=1/2 (0.5000)" in rows[0]["linked_pair_factors"]
+    assert rows[0]["female"] == "Fé01"
+    assert rows[1]["flags"] == ""
+    assert rows[1]["per_gene"] == ""
+    assert rows[1]["linked_pair_factors"] == ""
+
+
+@pytest.mark.parametrize("prefix", ["=", "+", "-", "@", "\t", "\r"])
+def test_ranked_pairs_csv_neutralizes_formula_leading_text(prefix):
+    result = RunResult(
+        ranked=(
+            RankedPairView(prefix + "M01", "F01", Fraction(1), (), (), ()),
+        ),
+        skipped=(),
+        excluded_animals=(),
+        notes=(),
+        pedigree_warnings=(),
+        signature=None,
+        error_message=None,
+    )
+
+    rows = list(
+        csv.DictReader(
+            StringIO(
+                ranked_pairs_csv(result, build_run_settings(targets={})).decode(
+                    "utf-8-sig"
+                ),
+                newline="",
+            )
+        )
+    )
+
+    assert rows[0]["male"] == "'" + prefix + "M01"
+    assert rows[0]["flags"] == ""
+    assert rows[0]["per_gene"] == ""
+    assert rows[0]["linked_pair_factors"] == ""
+
+
+def test_ranked_pairs_csv_returns_header_only_for_errors_or_no_nonzero_pairs():
+    header = (
+        "male,female,probability_numerator,probability_denominator,"
+        "probability_decimal,flags,per_gene,linked_pair_factors"
+    )
+    errored = RunResult((), (), (), (), (), None, "Cannot rank.")
+    all_zero = RunResult(
+        (RankedPairView("M01", "F01", Fraction(0), (), (), ()),),
+        (),
+        (),
+        (),
+        (),
+        None,
+        None,
+    )
+
+    settings = build_run_settings(targets={})
+    assert ranked_pairs_csv(errored, settings).decode("utf-8-sig").strip() == header
+    assert ranked_pairs_csv(all_zero, settings).decode("utf-8-sig").strip() == header
 
 
 def test_stale_linked_pair_notice_names_the_removed_pair():

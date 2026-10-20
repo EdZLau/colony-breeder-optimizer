@@ -108,6 +108,18 @@ def test_streamlit_page_renders_upload_widget():
 
     assert not app.exception
     assert len(app.get("file_uploader")) == 1
+    assert sum(
+        all(
+            phrase in element.value
+            for phrase in (
+                "keeps the upload in memory for the session",
+                "does not save it to disk, cache it, or log it",
+                "processed on the host's server",
+                "run the app locally",
+            )
+        )
+        for element in app.caption
+    ) == 1
 
 
 def test_upload_and_load_shows_animal_and_unknown_sex_counts():
@@ -798,4 +810,90 @@ def test_ranking_runs_only_on_click_and_result_validity_tracks_inputs(monkeypatc
         timeout=30
     )
     assert calls == [1]
+    assert "Ranking results" not in [element.value for element in app.subheader]
+
+
+def test_download_button_tracks_current_success_and_top_does_not_rerun_ranking(
+    monkeypatch,
+):
+    calls = []
+    original_run_ranking = run_ranking_module.run_ranking
+
+    def count_runs(*args, **kwargs):
+        calls.append(1)
+        return original_run_ranking(*args, **kwargs)
+
+    monkeypatch.setattr(run_ranking_module, "run_ranking", count_runs)
+    app = _loaded_sample_settings_app()
+    assert not app.get("download_button")
+
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    assert calls == [1]
+    assert len(app.get("download_button")) == 1
+    assert sum(
+        all(
+            phrase in element.value
+            for phrase in (
+                "keeps the upload in memory for the session",
+                "does not save it to disk, cache it, or log it",
+                "processed on the host's server",
+                "run the app locally",
+            )
+        )
+        for element in app.caption
+    ) == 1
+
+    next(
+        widget for widget in app.number_input if widget.label == "Top N pairs to show"
+    ).set_value(1).run(timeout=30)
+    assert calls == [1]
+    assert len(app.get("download_button")) == 1
+
+    next(
+        widget
+        for widget in app.text_area
+        if widget.label.startswith("Target genotypes for Cre")
+    ).set_value("Cre/+").run(timeout=30)
+    assert not app.get("download_button")
+    assert calls == [1]
+
+
+def test_download_button_is_absent_after_errored_run():
+    invalid_male_csv = (
+        b"animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        b"M01,M,C1,,,A/A\n"
+        b"F01,F,C2,,,A/a\n"
+    )
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "x-linked-invalid.csv",
+        invalid_male_csv,
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    ).select("Xgene").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Xgene", "A/Y")
+    next(widget for widget in app.multiselect if widget.label == "X-linked genes").select(
+        "Xgene"
+    ).run(timeout=30)
+
+    assert not app.get("download_button")
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+
+    assert not app.exception
+    assert "Row 2:" in app.session_state["run_error"]
+    assert not app.get("download_button")
     assert "Ranking results" not in [element.value for element in app.subheader]
