@@ -57,7 +57,7 @@ SWE internships. I want to understand everything.
      clear note that uploaded data is not stored.
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 380 tests passed.
+   - Latest full-suite result: 446 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -378,7 +378,43 @@ SWE internships. I want to understand everything.
   the upload flow.
 - In the 7c-2 UI, `gene_column_options` must also exclude any columns chosen
   for linked-pair phase.
-- The full suite passed 425 tests after step 7c-1c, part 1.
+- The full suite passed 425 tests after step 7c-1c, part 1 and before 7c-1d.
+
+## Decisions made in step 7c-1c
+- `parse_recombination_fraction` raises only `ValueError`; it checks the text
+  format before calling the core parser. Blank genotype alternatives are
+  dropped after stripping, while an empty target gene entry remains for
+  validation.
+- Validation reports configured genes that are missing from the uploaded
+  headers or mapped to a colony field.
+- `run_signature` canonicalizes genotypes with core parsers, sorts linked-pair
+  configurations while preserving gene order within each pair, excludes
+  display-only `top`, and includes `exclude_related`.
+- `run_signature` can raise `ValueError` for invalid settings; callers must
+  validate settings before computing the signature.
+- Core `rank_pairs` does not double-count reversed duplicate alternatives:
+  `["A/a", "a/A"]` gives the same probability as `["A/a"]`.
+
+## Decisions made in step 7c-1d
+- `app/run_ranking.py` contains pure run orchestration and frozen result views;
+  it has no Streamlit import. Result data is stored as tuples, including
+  per-gene and linked-pair probability entries.
+- A run validates first, reloads configured genes/phases from copied rows,
+  calls `rank_pairs` and `pedigree_warnings`, and returns core `ValueError`
+  messages as result errors. Core configuration and phase errors use
+  `ValueError`; all-lethal handling is a `ValueError` subclass handled by
+  `rank_pairs`.
+- Visible results exclude zero-probability pairs, and `top` limits only the
+  visible nonzero pairs. Skipped counts use the core kinds
+  `missing_genotype`, `missing_phase`, `excluded_related`, and `all_lethal`,
+  with zero entries for these current core categories. Any additional kind
+  present in the result is also counted so skipped pairs are never omitted.
+- Tests cover all-lethal and missing-phase pairs being skipped while other
+  pairs still rank, missing phase-column errors, and counts totaling every
+  skipped pair.
+- A synthetic 200-male by 200-female run ranked 40,000 pairs in 7.836 seconds
+  with 30.38 MB peak traced memory; no optimization was made.
+- Full-suite result after the 7c-1d fix-up: 446 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv

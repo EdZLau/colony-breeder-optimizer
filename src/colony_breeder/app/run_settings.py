@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from fractions import Fraction
+import re
 from types import MappingProxyType
 from typing import Iterable, Mapping, Optional, Sequence, Tuple, Union
 
@@ -11,6 +12,7 @@ from colony_breeder.core.linkage import linked_offspring_distribution
 
 GenotypeValues = Union[str, Iterable[str]]
 LinkedPairInput = Tuple[str, str, str, str]
+_RECOMBINATION_TEXT = re.compile(r"(?:[0-9]+(?:\.[0-9]+)?|[0-9]+/[0-9]+)\Z")
 
 
 @dataclass(frozen=True)
@@ -308,6 +310,11 @@ def parse_recombination_fraction(r_text: str) -> Fraction:
     if not isinstance(r_text, str):
         raise ValueError("r must be entered as text, not a float or boolean.")
     cleaned = r_text.strip()
+    if not _RECOMBINATION_TEXT.fullmatch(cleaned):
+        raise ValueError(
+            f"Invalid recombination fraction {r_text!r}: enter digits, a decimal, "
+            "or a fraction such as '1/10'."
+        )
     try:
         linked_offspring_distribution("A|B/A|B", "A|B/A|B", cleaned)
         return Fraction(cleaned)

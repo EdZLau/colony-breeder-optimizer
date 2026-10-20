@@ -94,7 +94,18 @@ def test_recombination_text_is_parsed_as_exact_fraction(text, expected):
     ) == []
 
 
-@pytest.mark.parametrize("text", ["1/0", "", "   ", "1/", "nan"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1/0",
+        "",
+        "   ",
+        "1/",
+        "nan",
+        "1e-999999999",
+        "1e999999999",
+    ],
+)
 def test_malformed_recombination_text_always_raises_value_error(text):
     with pytest.raises(ValueError):
         parse_recombination_fraction(text)
