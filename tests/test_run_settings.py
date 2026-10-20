@@ -6,10 +6,12 @@ from colony_breeder.app.run_settings import (
     build_reload_args,
     build_run_settings,
     parse_recombination_fraction,
+    run_signature,
     validate_run_settings,
 )
 from colony_breeder.app.ui_helpers import build_loader_args
-from colony_breeder.core.colony import load_colony_rows
+from colony_breeder.core.colony import Animal, load_colony_rows
+from colony_breeder.core.ranking import rank_pairs
 
 
 FIELDNAMES = ["animal_id", "sex", "cage", "mother_id", "father_id", "A", "B", "AB_phase"]
@@ -60,6 +62,22 @@ def test_build_run_settings_strips_and_stably_deduplicates_values():
         settings.targets["A"] = ("A/A",)
 
 
+def test_build_run_settings_drops_blank_genotypes_but_keeps_target_gene():
+    settings = build_run_settings(
+        targets={"A": ["", "  ", " A/a "]},
+        lethals={"B": ["", "  "]},
+    )
+
+    assert dict(settings.targets) == {"A": ("A/a",)}
+    assert dict(settings.lethals) == {"B": ()}
+
+    empty_target = build_run_settings(targets={"A": ["", "  "]})
+    assert dict(empty_target.targets) == {"A": ()}
+    assert _errors(empty_target) == [
+        "Target genotype list for gene 'A' cannot be empty."
+    ]
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -74,6 +92,16 @@ def test_recombination_text_is_parsed_as_exact_fraction(text, expected):
     assert _errors(
         _settings(linked_pairs=[("A", "B", text, "AB_phase")])
     ) == []
+
+
+@pytest.mark.parametrize("text", ["1/0", "", "   ", "1/", "nan"])
+def test_malformed_recombination_text_always_raises_value_error(text):
+    with pytest.raises(ValueError):
+        parse_recombination_fraction(text)
+
+
+def test_recombination_text_with_surrounding_spaces_is_accepted():
+    assert parse_recombination_fraction("  0.1  ") == Fraction(1, 10)
 
 
 @pytest.mark.parametrize("text", ["0.6", "abc"])
@@ -104,6 +132,22 @@ def test_target_gene_must_be_in_selected_gene_pool():
     errors = _errors(_settings(targets={"C": "C/c"}))
     assert len(errors) == 1
     assert "Target gene 'C'" in errors[0]
+
+
+def test_gene_in_pool_but_missing_from_uploaded_headers_is_reported():
+    errors = _errors(
+        _settings(targets={"A": "A/a"}),
+        fieldnames=["animal_id", "sex", "cage", "mother_id", "father_id"],
+    )
+    assert errors == [
+        "Selected gene 'A' is not present in the uploaded headers."
+    ]
+
+
+def test_gene_mapped_to_a_colony_field_is_reported():
+    mapping = dict(MAPPING, cage="A")
+    errors = _errors(_settings(targets={"A": "A/a"}), mapping=mapping)
+    assert errors == ["Selected gene 'A' is mapped to a colony field."]
 
 
 def test_lethal_gene_must_be_in_selected_gene_pool():
@@ -269,3 +313,92 @@ def test_reload_arguments_load_a_linked_pair_from_tiny_fake_rows():
 
     assert animals[0].genotypes == {"A": "A/a", "B": "B/b"}
     assert animals[0].phases == {("A", "B"): "A|B/a|b"}
+
+
+def test_rank_pairs_does_not_double_count_alternative_genotype_spellings():
+    colony = [
+        Animal("M01", "M", "C1", "", "", {"A": "A/a"}),
+        Animal("F01", "F", "C2", "", "", {"A": "A/a"}),
+    ]
+
+    single_alternative = rank_pairs(colony, {"A": ["A/a"]})
+    reversed_duplicate = rank_pairs(colony, {"A": ["A/a", "a/A"]})
+
+    assert single_alternative.ranked[0].probability == Fraction(1, 2)
+    assert reversed_duplicate.ranked[0].probability == Fraction(1, 2)
+    assert reversed_duplicate.ranked[0].probability == (
+        single_alternative.ranked[0].probability
+    )
+
+
+def test_run_signature_changes_for_each_result_affecting_setting():
+    base = _settings()
+    signature = run_signature(("upload", 1), base)
+
+    changed_settings = [
+        _settings(targets={"A": "A/A"}),
+        _settings(lethals={"A": "A/A"}),
+        _settings(x_linked_genes=["A"]),
+        _settings(linked_pairs=[("A", "B", "1/10", "AB_phase")]),
+        _settings(linked_pairs=[("A", "B", "1/10", "Other_phase")]),
+        _settings(linked_pairs=[("B", "A", "1/10", "AB_phase")]),
+        _settings(linked_pairs=[("A", "B", "1/5", "AB_phase")]),
+        _settings(exclude_related=True),
+    ]
+
+    assert run_signature(("upload", 2), base) != signature
+    for settings in changed_settings:
+        assert run_signature(("upload", 1), settings) != signature
+
+
+def test_run_signature_canonicalizes_order_and_genotype_spellings():
+    settings = _settings(
+        targets={"A": ["A/a", "a/A"]},
+        lethals={"B": ["B/b", "b/B"]},
+        x_linked_genes=["X", "Y"],
+        linked_pairs=[
+            ("A", "B", "1/10", "AB_phase"),
+            ("C", "D", "1/5", "CD_phase"),
+        ],
+        top=2,
+    )
+    reordered = _settings(
+        targets={"A": ["aA"]},
+        lethals={"B": ["bB"]},
+        x_linked_genes=["Y", "X"],
+        linked_pairs=[
+            ("C", "D", "0.2", "CD_phase"),
+            ("A", "B", "0.1", "AB_phase"),
+        ],
+        top=99,
+    )
+
+    first = run_signature(("upload", 1), settings)
+    second = run_signature(("upload", 1), reordered)
+
+    assert first == second
+    assert hash(first)
+
+
+def test_run_signature_canonicalizes_x_linked_genotype_order():
+    first = _settings(
+        targets={"X": ["A/a"]},
+        x_linked_genes=["X"],
+    )
+    second = _settings(
+        targets={"X": ["a/A"]},
+        x_linked_genes=["X"],
+    )
+
+    assert run_signature(("upload", 1), first) == run_signature(
+        ("upload", 1), second
+    )
+
+
+def test_run_signature_does_not_canonicalize_gene_order_inside_linked_pair():
+    first = _settings(linked_pairs=[("A", "B", "1/10", "AB_phase")])
+    swapped = _settings(linked_pairs=[("B", "A", "1/10", "AB_phase")])
+
+    assert run_signature(("upload", 1), first) != run_signature(
+        ("upload", 1), swapped
+    )

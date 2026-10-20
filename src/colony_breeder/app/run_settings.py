@@ -43,6 +43,8 @@ def _normalise_genotypes(
                     f"Genotype values for gene {gene!r} must be text."
                 )
             value = raw_value.strip()
+            if not value:
+                continue
             if value not in seen:
                 seen.add(value)
                 normalized_values.append(value)
@@ -148,6 +150,28 @@ def validate_run_settings(
 
     if not settings.targets:
         errors.append("Choose at least one target gene and genotype.")
+
+    configured_genes = dict.fromkeys(
+        [
+            *settings.targets,
+            *settings.lethals,
+            *settings.x_linked_genes,
+            *(
+                gene
+                for gene1, gene2, _, _ in settings.linked_pairs
+                for gene in (gene1, gene2)
+            ),
+        ]
+    )
+    for gene in configured_genes:
+        if gene in available_genes and gene not in available_columns:
+            errors.append(
+                f"Selected gene {gene!r} is not present in the uploaded headers."
+            )
+        if gene in mapped_columns:
+            errors.append(
+                f"Selected gene {gene!r} is mapped to a colony field."
+            )
 
     for category, settings_by_gene in (
         ("target", settings.targets),
@@ -283,5 +307,65 @@ def parse_recombination_fraction(r_text: str) -> Fraction:
     """Validate recombination text with the core and return its exact fraction."""
     if not isinstance(r_text, str):
         raise ValueError("r must be entered as text, not a float or boolean.")
-    linked_offspring_distribution("A|B/A|B", "A|B/A|B", r_text)
-    return Fraction(r_text)
+    cleaned = r_text.strip()
+    try:
+        linked_offspring_distribution("A|B/A|B", "A|B/A|B", cleaned)
+        return Fraction(cleaned)
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError(f"Invalid recombination fraction {r_text!r}: {exc}") from exc
+
+
+def _canonical_genotype(text: str, x_linked: bool) -> Tuple[str, str]:
+    if not x_linked:
+        return parse_genotype(text)
+    parts = text.strip().split("/")
+    sex = (
+        "M"
+        if len(parts) == 2 and parts[1].strip().lower() == "y"
+        else "F"
+    )
+    return parse_x_linked_genotype(text, sex)
+
+
+def _canonical_genotype_settings(
+    values_by_gene: Mapping[str, Tuple[str, ...]],
+    x_linked_genes: set,
+) -> Tuple[Tuple[str, Tuple[Tuple[str, str], ...]], ...]:
+    return tuple(
+        (
+            gene,
+            tuple(
+                sorted(
+                    {
+                        _canonical_genotype(genotype, gene in x_linked_genes)
+                        for genotype in genotypes
+                    }
+                )
+            ),
+        )
+        for gene, genotypes in sorted(values_by_gene.items())
+    )
+
+
+def run_signature(base_signature: tuple, settings: RunSettings) -> tuple:
+    """Build a hashable signature for all settings that affect ranking output."""
+    x_linked_genes = set(settings.x_linked_genes)
+    linked_pairs = tuple(
+        sorted(
+            (
+                gene1,
+                gene2,
+                parse_recombination_fraction(r_text),
+                phase_column,
+            )
+            for gene1, gene2, r_text, phase_column in settings.linked_pairs
+        )
+    )
+    return (
+        base_signature,
+        _canonical_genotype_settings(settings.targets, x_linked_genes),
+        _canonical_genotype_settings(settings.lethals, x_linked_genes),
+        tuple(sorted(x_linked_genes)),
+        linked_pairs,
+        settings.exclude_related,
+    )

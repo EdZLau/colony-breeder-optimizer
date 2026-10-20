@@ -363,6 +363,23 @@ SWE internships. I want to understand everything.
   unvalidated during loading.
 - Full-suite result after step 7c-1a: 380 tests passed.
 
+## Decisions made in step 7c-1b
+- `app/run_settings.py` is pure logic and does not import Streamlit. Its frozen
+  `RunSettings` contains targets, lethals, X-linked gene names, linked pairs,
+  `exclude_related`, and display-only `top`.
+- The gene columns selected in 7b-2 are the eligible pool: every target,
+  lethal, X-linked, or linked gene must be selected there. Phase columns are
+  not genes in that pool; they are loaded through `linked_pairs`.
+- Recombination `r` is entered as text and parsed to an exact `Fraction` in
+  `[0, 1/2]`; floats and booleans are rejected.
+- `build_reload_args` adds the stable, deduplicated union of configured gene
+  columns, the X-linked gene names, and linked-pair loader arguments. Phase
+  columns are excluded from `gene_columns`; unknown sex remains allowed for
+  the upload flow.
+- In the 7c-2 UI, `gene_column_options` must also exclude any columns chosen
+  for linked-pair phase.
+- The full suite passed 425 tests after step 7c-1c, part 1.
+
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
   (activate: .venv\Scripts\Activate.ps1). Install: pip install -e ".[dev]"
