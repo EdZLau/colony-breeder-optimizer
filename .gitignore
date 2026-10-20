@@ -11,6 +11,7 @@ dist/
 # Only explicitly named fake sample files in data/ are meant to be tracked.
 *.csv
 *.xlsx
+*.xls
 review.txt
 data/*
 !data/sample_mice.csv

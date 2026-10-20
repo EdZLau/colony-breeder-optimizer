@@ -50,14 +50,14 @@ def _loaded_settings_app(gene_columns):
     pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     for gene in gene_columns:
         pool.select(gene).run(timeout=30)
         pool = next(
             widget
             for widget in app.multiselect
-            if widget.label == "Gene columns to inspect (not parsed in this step)"
+            if widget.label == "Gene columns to use in settings"
         )
     next(button for button in app.button if button.label == "Load colony").click().run(
         timeout=30
@@ -93,7 +93,7 @@ def _loaded_sample_settings_app():
     gene_pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     gene_pool.select("Cre").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
@@ -223,7 +223,7 @@ def test_settings_controls_validate_live_without_running_ranking():
     gene_pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     gene_pool.select("Cre").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
@@ -289,7 +289,7 @@ def test_settings_signature_uses_upload_inputs_but_ignores_top():
     pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     pool.select("A").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
@@ -428,7 +428,7 @@ def test_removing_gene_from_pool_cleans_stale_linked_selectbox_state():
     pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     pool.unselect("A").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
@@ -525,7 +525,7 @@ def test_x_linked_male_genotype_error_is_plain_and_has_no_traceback():
     pool = next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     )
     pool.select("Xgene").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
@@ -575,7 +575,7 @@ def test_failed_run_error_persists_for_current_settings_and_top_change(monkeypat
     next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     ).select("Xgene").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
         timeout=30
@@ -639,7 +639,7 @@ def test_changed_valid_x_linked_target_hides_error_without_rerunning_ranking(
     next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     ).select("Xgene").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
         timeout=30
@@ -695,7 +695,7 @@ def test_signature_change_hides_persisted_run_error():
     next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     ).select("Xgene").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
         timeout=30
@@ -878,7 +878,7 @@ def test_download_button_is_absent_after_errored_run():
     next(
         widget
         for widget in app.multiselect
-        if widget.label == "Gene columns to inspect (not parsed in this step)"
+        if widget.label == "Gene columns to use in settings"
     ).select("Xgene").run(timeout=30)
     next(button for button in app.button if button.label == "Load colony").click().run(
         timeout=30

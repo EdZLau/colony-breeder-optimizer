@@ -525,6 +525,35 @@ SWE internships. I want to understand everything.
   uploader, including before any upload.
 - Full-suite result after step 7d fix-up: 489 tests passed.
 
+## Decisions made in step 7e-1, part 1
+- The stale gene-pool label `Gene columns to inspect (not parsed in this step)`
+  was replaced with `Gene columns to use in settings`; AppTests now select by
+  the updated label. A search of `src/colony_breeder/app` found no other
+  stale step-era strings matching the checked wording.
+- Root `requirements.txt` uses `-e .[app]`. The `[app]` extra already contains
+  Streamlit, pandas, openpyxl, and defusedxml, so no duplicate dependency
+  entries are needed. A local pip dry run prepared the editable package
+  metadata; setuptools discovers `colony_breeder` under `src/`, making the
+  package importable when installed. Community Cloud's documented dependency
+  lookup accepts a root requirements file.
+- `.streamlit/config.toml` was confirmed to set `server.maxUploadSize = 10`
+  and `browser.gatherUsageStats = false`.
+- Python 3.12 is the deployment recommendation because current Community
+  Cloud documentation identifies it as the default. `requires-python` remains
+  `>=3.9`; compatibility on Python 3.12 and an actual Cloud build are
+  unverified. The official Cloud deployment guide also confirms the create-app
+  flow uses repository, branch, and entrypoint path.
+- No Git remote is configured. The local branch is `main`, but the intended
+  GitHub repository and remote branch cannot be verified in this checkout.
+- `git ls-files` found two tracked spreadsheet data files:
+  `data/sample_mice.csv` and `data/sample_linked_FAKE.csv`; both are fake
+  demonstration data. `.gitignore` already ignored CSV and `.xlsx` files and
+  allowed only these named files under `data/`; `*.xls` was missing and has
+  been added. `.streamlit/config.toml` was unchanged.
+- `docs/deploy.md` records the deployment steps and states that hosted uploads
+  are processed on the host server and public repositories/apps must not
+  contain real lab data. No deployment was attempted.
+
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
   (activate: .venv\Scripts\Activate.ps1). Install: pip install -e ".[dev]"

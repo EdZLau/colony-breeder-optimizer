@@ -769,7 +769,7 @@ def main() -> None:
         options,
     )
     gene_selection = st.multiselect(
-        "Gene columns to inspect (not parsed in this step)",
+        "Gene columns to use in settings",
         options=options,
         key="gene_selection_widget",
     )
