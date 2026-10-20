@@ -58,8 +58,9 @@ SWE internships. I want to understand everything.
    - 7c-3: Wire ranking to an explicit button and display the run result (DONE).
    - 7d: Add a downloadable ranked table and a clear note that uploaded data
      is not stored (DONE).
-   - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
-     via download or published link.
+   - 7e-1: Deployment readiness, Google Sheets file-export guide, and
+     reproducible AppTest timing measurements (DONE).
+   - 7e-2: Manual Streamlit Community Cloud deployment.
      <-- NEXT
    - Latest full-suite result: 489 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
@@ -553,6 +554,37 @@ SWE internships. I want to understand everything.
 - `docs/deploy.md` records the deployment steps and states that hosted uploads
   are processed on the host server and public repositories/apps must not
   contain real lab data. No deployment was attempted.
+
+## Decisions made in step 7e-1
+- `docs/google-sheets-input.md` instructs users to download a CSV or XLSX via
+  **File > Download** and upload it. The app does not accept a Sheets URL or
+  published link because it only reads uploaded files and does not fetch URLs.
+  The guide also covers header-row selection, one sheet per CSV, sex mapping,
+  and X-linked male (`A/Y`) and female (`A/a`) genotype formats.
+- `scripts/measure_app_timing.py` is a standalone AppTest script outside
+  `tests/`. It creates synthetic 200-male × 200-female CSVs, leaves
+  `tracemalloc` off, and uses `time.perf_counter` around the Run ranking click
+  and a display-only top-N rerun. The rerun retains the result on screen and
+  rebuilds the CSV/rendered tables. Run it from the repository root with
+  `.venv\Scripts\python scripts\measure_app_timing.py`.
+- The timing script was run three times per scenario on this local Windows
+  machine using Python 3.14. Measurements are single-machine observations,
+  not guarantees:
+
+  | Scenario | Ranked | Skipped | Run click (s), runs 1/2/3 | Top-N rerun (s), runs 1/2/3 |
+  |---|---:|---:|---|---|
+  | A: one gene, all `A/a`, target `A/a`, no skips | 40,000 | 0 | 1.840 / 1.771 / 1.829 | 0.310 / 0.294 / 0.297 |
+  | B: two unlinked genes and one linked pair; 20 males blank at targeted `U1` | 36,000 | 4,000 | 6.277 / 6.288 / 6.445 | 0.516 / 0.532 / 0.547 |
+
+- The older 1.740-second run is not reproduced exactly; scenario A's new
+  measurements are close but differ. Scenario B includes linked-pair
+  calculations and thousands of missing-genotype skips; no optimization was
+  made.
+- The intended GitHub repository/branch and actual Community Cloud build
+  remain unverified because no remote is configured and deployment was not
+  performed. Python 3.12 remains a recommendation; only local Python 3.14 was
+  used for these measurements.
+- Full-suite result after step 7e-1: 489 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv
