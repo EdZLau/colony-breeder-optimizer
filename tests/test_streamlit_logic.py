@@ -5,12 +5,15 @@ import pytest
 from colony_breeder.app.streamlit_logic import (
     LoadResultView,
     colony_sex_warnings,
+    build_settings_from_widgets,
     default_column_selections,
     default_sex_value_mapping,
     drop_stale_genes,
+    drop_stale_run_settings,
     format_load_result,
     gene_column_options,
     input_signature,
+    phase_column_options,
     preview_rows,
     sex_mapping_check,
     sex_value_label,
@@ -22,6 +25,7 @@ from colony_breeder.app.ui_helpers import (
     guess_sex_value_mapping,
     load_from_upload,
 )
+from colony_breeder.app.run_settings import build_run_settings
 from colony_breeder.app.upload import UploadResult
 from colony_breeder.core.colony import Animal
 
@@ -185,6 +189,83 @@ def test_gene_column_options_excludes_every_mapped_colony_column():
     }
 
     assert gene_column_options(fieldnames, mapping) == ["Cre", "Ob"]
+
+
+def test_gene_options_exclude_phase_columns_and_phase_options_exclude_gene_pool():
+    fieldnames = ["ID", "Sex", "Cage", "A", "B", "AB_phase", "Cre"]
+    mapping = {
+        "animal_id": "ID",
+        "sex": "Sex",
+        "cage": "Cage",
+        "mother_id": NONE_COLUMN,
+        "father_id": NONE_COLUMN,
+    }
+
+    assert gene_column_options(
+        fieldnames,
+        mapping,
+        excluded_columns=["AB_phase"],
+    ) == ["A", "B", "Cre"]
+    assert phase_column_options(fieldnames, mapping, ["A", "B"]) == [
+        "AB_phase",
+        "Cre",
+    ]
+
+
+def test_drop_stale_run_settings_when_pool_headers_or_mapping_change():
+    settings = build_run_settings(
+        targets={"A": ["A/a"], "Cre": ["Cre/+"]},
+        lethals={"B": ["B/B"]},
+        x_linked_genes=["X", "A"],
+        linked_pairs=[
+            ("A", "B", "1/10", "AB_phase"),
+            ("A", "Cre", "1/10", "Cre_phase"),
+        ],
+        exclude_related=True,
+        top=5,
+    )
+    fieldnames = ["ID", "Sex", "Cage", "A", "B", "AB_phase", "Cre", "Cre_phase"]
+    mapping = {
+        "animal_id": "ID",
+        "sex": "Sex",
+        "cage": "Cage",
+        "mother_id": NONE_COLUMN,
+        "father_id": NONE_COLUMN,
+    }
+
+    current = drop_stale_run_settings(
+        settings,
+        gene_pool=["A", "B"],
+        fieldnames=fieldnames,
+        column_mapping=mapping,
+    )
+
+    assert dict(current.targets) == {"A": ("A/a",)}
+    assert dict(current.lethals) == {"B": ("B/B",)}
+    assert current.x_linked_genes == ("A",)
+    assert current.linked_pairs == (("A", "B", "1/10", "AB_phase"),)
+    assert current.exclude_related is True
+    assert current.top == 5
+
+
+def test_build_settings_from_widget_text_and_linked_rows():
+    settings = build_settings_from_widgets(
+        target_genotypes={"Cre": "Cre/+\n\n+/+"},
+        lethal_genotypes={"Ob": " ob/ob \n"},
+        x_linked_genes=["Xgene"],
+        linked_pairs=[("Cre", "Ob", " 0.1 ", "Cre_Ob_phase")],
+        exclude_related=True,
+        top=10,
+    )
+
+    assert dict(settings.targets) == {"Cre": ("Cre/+", "+/+")}
+    assert dict(settings.lethals) == {"Ob": ("ob/ob",)}
+    assert settings.x_linked_genes == ("Xgene",)
+    assert settings.linked_pairs == (
+        ("Cre", "Ob", "0.1", "Cre_Ob_phase"),
+    )
+    assert settings.exclude_related is True
+    assert settings.top == 10
 
 
 def test_drop_stale_genes_preserves_order_of_current_options():

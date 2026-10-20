@@ -6,16 +6,24 @@ from typing import Dict, Optional, Sequence, Tuple
 import streamlit as st
 
 from colony_breeder.app.streamlit_logic import (
+    build_settings_from_widgets,
     colony_sex_warnings,
     default_column_selections,
     default_sex_value_mapping,
     drop_stale_genes,
+    drop_stale_run_settings,
     format_load_result,
     gene_column_options,
     input_signature,
+    phase_column_options,
     preview_rows,
     sex_mapping_check,
     sex_value_label,
+)
+from colony_breeder.app.run_settings import (
+    RunSettings,
+    run_signature,
+    validate_run_settings,
 )
 from colony_breeder.app.ui_helpers import (
     NONE_COLUMN,
@@ -28,10 +36,37 @@ from colony_breeder.app.upload import SheetChoiceRequired, UploadResult, read_up
 _OPTIONAL_COLUMNS = {"cage", "mother_id", "father_id"}
 _MAPPING_WIDGETS = ("animal_id", "sex", "cage", "mother_id", "father_id")
 _SEX_OPTIONS = ("M", "F", "unknown")
-_STRUCTURE_NOTICE = (
-    "Genotypes have NOT been loaded or validated. Ranking is unavailable "
-    "until step 7c."
+_SETTINGS_WIDGET_KEYS = (
+    "target_genes_widget",
+    "lethal_genes_widget",
+    "x_linked_genes_widget",
+    "linked_pair_count_widget",
+    "exclude_related_widget",
+    "top_widget",
 )
+_LINKED_WIDGET_PREFIXES = (
+    "linked_gene1_",
+    "linked_gene2_",
+    "linked_r_",
+    "linked_phase_",
+)
+_SETTINGS_WIDGET_PREFIXES = (
+    "target_genotype_",
+    "lethal_genotype_",
+    *_LINKED_WIDGET_PREFIXES,
+)
+_STRUCTURE_NOTICE = (
+    "Genotypes have NOT been loaded or validated from the colony. Settings are "
+    "validated, but ranking is not available yet."
+)
+
+
+def _clear_settings_widgets() -> None:
+    for key in _SETTINGS_WIDGET_KEYS:
+        st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if key.startswith(_SETTINGS_WIDGET_PREFIXES):
+            st.session_state.pop(key, None)
 
 
 def _reset_upload_state() -> None:
@@ -42,10 +77,14 @@ def _reset_upload_state() -> None:
         "loaded_result",
         "loaded_signature",
         "header_context",
+        "run_settings_draft",
+        "settings_context",
+        "settings_signature",
     ):
         st.session_state.pop(key, None)
     for key in _MAPPING_WIDGETS:
         st.session_state.pop(f"mapping_widget_{key}", None)
+    _clear_settings_widgets()
     st.session_state.pop("gene_selection_widget", None)
     for key in list(st.session_state):
         if key.startswith("sex_widget_"):
@@ -142,6 +181,325 @@ def _display_load_result(result: UploadLoadResult) -> None:
         st.warning(warning)
     for gene, values in view.gene_value_summaries:
         st.write(f"{gene}: {', '.join(values)}")
+
+
+def _settings_controls(
+    upload: UploadResult,
+    column_mapping: Dict[str, Optional[str]],
+    gene_pool: Sequence[str],
+    settings_context: tuple,
+    base_signature: tuple,
+) -> None:
+    st.header("Breeding settings")
+    st.caption(
+        "Untargeted autosomal lethals are ignored unless the gene is in a linked "
+        "pair. Untargeted lethals on X-linked or linked genes affect survival."
+    )
+    st.caption(
+        "In your spreadsheet, X-linked males must be written A/Y and females "
+        "A/a or A/A; target entries may use either form. "
+        "X-linked genes are treated as unlinked to each other."
+    )
+    st.caption(
+        '"(none)" for mother or father disables parent-based relatedness flags; '
+        '"(none)" for cage disables same-cage flags. Linked pairs are assumed '
+        "independent of other genes."
+    )
+
+    if st.session_state.get("settings_context") != settings_context:
+        _clear_settings_widgets()
+        st.session_state.pop("run_settings_draft", None)
+        st.session_state.pop("settings_signature", None)
+        st.session_state["settings_context"] = settings_context
+
+    previous_settings = st.session_state.get("run_settings_draft")
+    prior_phases = (
+        [pair[3] for pair in previous_settings.linked_pairs if pair[3]]
+        if isinstance(previous_settings, RunSettings)
+        else []
+    )
+    available_gene_options = gene_column_options(
+        upload.fieldnames,
+        column_mapping,
+        excluded_columns=prior_phases,
+    )
+    eligible_gene_pool = drop_stale_genes(gene_pool, available_gene_options)
+    if isinstance(previous_settings, RunSettings):
+        previous_settings = drop_stale_run_settings(
+            previous_settings,
+            eligible_gene_pool,
+            upload.fieldnames,
+            column_mapping,
+        )
+        st.session_state["run_settings_draft"] = previous_settings
+
+    phase_options = phase_column_options(
+        upload.fieldnames,
+        column_mapping,
+        eligible_gene_pool,
+    )
+
+    prior_targets = (
+        dict(previous_settings.targets)
+        if isinstance(previous_settings, RunSettings)
+        else {}
+    )
+    prior_lethals = (
+        dict(previous_settings.lethals)
+        if isinstance(previous_settings, RunSettings)
+        else {}
+    )
+    prior_target_genes = [
+        gene for gene in prior_targets if gene in eligible_gene_pool
+    ]
+    prior_lethal_genes = [
+        gene for gene in prior_lethals if gene in eligible_gene_pool
+    ]
+
+    target_key = "target_genes_widget"
+    if target_key not in st.session_state:
+        st.session_state[target_key] = drop_stale_genes(
+            prior_target_genes,
+            eligible_gene_pool,
+        )
+    else:
+        st.session_state[target_key] = drop_stale_genes(
+            st.session_state[target_key],
+            eligible_gene_pool,
+        )
+    target_genes = st.multiselect(
+        "Target genes",
+        options=eligible_gene_pool,
+        key=target_key,
+    )
+    for key in list(st.session_state):
+        if key.startswith("target_genotype_") and key.removeprefix(
+            "target_genotype_"
+        ) not in target_genes:
+            st.session_state.pop(key, None)
+    target_texts = {}
+    for gene in target_genes:
+        widget_key = f"target_genotype_{gene}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = "\n".join(prior_targets.get(gene, ()))
+        examples = summarize_distinct_values(upload.rows, [gene]).get(gene, [])
+        target_texts[gene] = st.text_area(
+            f"Target genotypes for {gene} (one per line)",
+            key=widget_key,
+            help=(
+                "Enter one genotype per line; multiple lines are alternatives. "
+                f"Observed values (examples only): {', '.join(examples) or 'none'}"
+            ),
+        )
+
+    lethal_key = "lethal_genes_widget"
+    if lethal_key not in st.session_state:
+        st.session_state[lethal_key] = drop_stale_genes(
+            prior_lethal_genes,
+            eligible_gene_pool,
+        )
+    else:
+        st.session_state[lethal_key] = drop_stale_genes(
+            st.session_state[lethal_key],
+            eligible_gene_pool,
+        )
+    lethal_genes = st.multiselect(
+        "Genes with lethal genotypes (optional)",
+        options=eligible_gene_pool,
+        key=lethal_key,
+    )
+    for key in list(st.session_state):
+        if key.startswith("lethal_genotype_") and key.removeprefix(
+            "lethal_genotype_"
+        ) not in lethal_genes:
+            st.session_state.pop(key, None)
+    lethal_texts = {}
+    for gene in lethal_genes:
+        widget_key = f"lethal_genotype_{gene}"
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = "\n".join(prior_lethals.get(gene, ()))
+        examples = summarize_distinct_values(upload.rows, [gene]).get(gene, [])
+        lethal_texts[gene] = st.text_area(
+            f"Lethal genotypes for {gene} (one per line)",
+            key=widget_key,
+            help=(
+                "Optional; enter one genotype per line. "
+                f"Observed values (examples only): {', '.join(examples) or 'none'}"
+            ),
+        )
+
+    prior_x_linked = (
+        list(previous_settings.x_linked_genes)
+        if isinstance(previous_settings, RunSettings)
+        else []
+    )
+    x_linked_key = "x_linked_genes_widget"
+    if x_linked_key not in st.session_state:
+        st.session_state[x_linked_key] = drop_stale_genes(
+            prior_x_linked,
+            eligible_gene_pool,
+        )
+    else:
+        st.session_state[x_linked_key] = drop_stale_genes(
+            st.session_state[x_linked_key],
+            eligible_gene_pool,
+        )
+    x_linked_genes = st.multiselect(
+        "X-linked genes",
+        options=eligible_gene_pool,
+        key=x_linked_key,
+    )
+
+    prior_pairs = (
+        list(previous_settings.linked_pairs)
+        if isinstance(previous_settings, RunSettings)
+        else []
+    )
+    pair_count_key = "linked_pair_count_widget"
+    if pair_count_key not in st.session_state:
+        st.session_state[pair_count_key] = min(len(prior_pairs), 3)
+    pair_count = st.number_input(
+        "Linked gene pairs (up to 3)",
+        min_value=0,
+        max_value=3,
+        step=1,
+        key=pair_count_key,
+    )
+    for key in list(st.session_state):
+        for prefix in _LINKED_WIDGET_PREFIXES:
+            if key.startswith(prefix):
+                try:
+                    row_index = int(key[len(prefix):])
+                except ValueError:
+                    continue
+                if row_index >= int(pair_count):
+                    st.session_state.pop(key, None)
+    linked_pairs = []
+    for index in range(int(pair_count)):
+        previous_pair = prior_pairs[index] if index < len(prior_pairs) else (
+            "",
+            "",
+            "",
+            "",
+        )
+        st.markdown(f"**Linked pair {index + 1}**")
+        col1, col2 = st.columns(2)
+        gene1_key = f"linked_gene1_{index}"
+        gene2_key = f"linked_gene2_{index}"
+        phase_key = f"linked_phase_{index}"
+        r_key = f"linked_r_{index}"
+
+        gene_select_options = [NONE_COLUMN, *eligible_gene_pool]
+        phase_select_options = [NONE_COLUMN, *phase_options]
+        if r_key not in st.session_state:
+            st.session_state[r_key] = previous_pair[2]
+        for key, options, previous_value in (
+            (gene1_key, gene_select_options, previous_pair[0]),
+            (gene2_key, gene_select_options, previous_pair[1]),
+            (phase_key, phase_select_options, previous_pair[3]),
+        ):
+            if st.session_state.get(key) not in options:
+                st.session_state[key] = (
+                    previous_value if previous_value in options else NONE_COLUMN
+                )
+
+        with col1:
+            gene1 = st.selectbox(
+                "Gene 1",
+                options=gene_select_options,
+                key=gene1_key,
+            )
+            gene2 = st.selectbox(
+                "Gene 2",
+                options=gene_select_options,
+                key=gene2_key,
+            )
+        with col2:
+            recombination_text = st.text_input(
+                "Recombination fraction r",
+                key=r_key,
+                help=(
+                    "recombination fraction from 0 to 0.5, not map distance; "
+                    "one value is used for both sexes."
+                ),
+            )
+            phase_column = st.selectbox(
+                "Phase column",
+                options=phase_select_options,
+                key=phase_key,
+            )
+        st.caption("Phase text must follow gene1|gene2 order.")
+        row_has_setting = (
+            gene1 != NONE_COLUMN
+            or gene2 != NONE_COLUMN
+            or bool(recombination_text.strip())
+            or phase_column != NONE_COLUMN
+        )
+        if row_has_setting:
+            linked_pairs.append(
+                (
+                    "" if gene1 == NONE_COLUMN else gene1,
+                    "" if gene2 == NONE_COLUMN else gene2,
+                    recombination_text,
+                    "" if phase_column == NONE_COLUMN else phase_column,
+                )
+            )
+
+    if "exclude_related_widget" not in st.session_state:
+        st.session_state["exclude_related_widget"] = (
+            previous_settings.exclude_related
+            if isinstance(previous_settings, RunSettings)
+            else False
+        )
+    exclude_related = st.checkbox(
+        "Exclude related pairs",
+        key="exclude_related_widget",
+    )
+    if "top_widget" not in st.session_state:
+        st.session_state["top_widget"] = (
+            previous_settings.top
+            if isinstance(previous_settings, RunSettings)
+            and previous_settings.top is not None
+            else 10
+        )
+    top = st.number_input(
+        "Top N pairs to show",
+        min_value=1,
+        step=1,
+        key="top_widget",
+    )
+
+    settings = build_settings_from_widgets(
+        target_texts,
+        lethal_texts,
+        x_linked_genes,
+        linked_pairs,
+        exclude_related,
+        int(top),
+    )
+    settings = drop_stale_run_settings(
+        settings,
+        eligible_gene_pool,
+        upload.fieldnames,
+        column_mapping,
+    )
+    st.session_state["run_settings_draft"] = settings
+    errors = validate_run_settings(
+        settings,
+        eligible_gene_pool,
+        upload.fieldnames,
+        column_mapping,
+    )
+    if errors:
+        st.session_state.pop("settings_signature", None)
+        st.error("Settings need attention:")
+        st.markdown("\n".join(f"- {error}" for error in errors))
+    else:
+        st.session_state["settings_signature"] = run_signature(
+            base_signature,
+            settings,
+        )
+        st.success("Settings valid.")
 
 
 def _choose_workbook_sheet() -> None:
@@ -266,7 +624,17 @@ def main() -> None:
         mapping.get("sex"),
     )
 
-    options = gene_column_options(upload.fieldnames, mapping)
+    saved_settings = st.session_state.get("run_settings_draft")
+    saved_phase_columns = (
+        [pair[3] for pair in saved_settings.linked_pairs if pair[3]]
+        if isinstance(saved_settings, RunSettings)
+        else []
+    )
+    options = gene_column_options(
+        upload.fieldnames,
+        mapping,
+        excluded_columns=saved_phase_columns,
+    )
     stored_genes = st.session_state.get(
         "gene_selection_widget",
         st.session_state.get("gene_selection", []),
@@ -314,6 +682,20 @@ def main() -> None:
     if stored_result is not None:
         if st.session_state.get("loaded_signature") == signature:
             _display_load_result(stored_result)
+            if stored_result.error_message is None:
+                settings_context = (
+                    file_name,
+                    content_hash,
+                    upload.sheet_name,
+                    int(header_row),
+                )
+                _settings_controls(
+                    upload,
+                    mapping,
+                    gene_selection,
+                    settings_context,
+                    signature,
+                )
         else:
             st.info("Inputs changed; press Load colony again to refresh the result.")
 

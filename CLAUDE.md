@@ -57,7 +57,7 @@ SWE internships. I want to understand everything.
      clear note that uploaded data is not stored.
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 446 tests passed.
+   - Latest full-suite result: 450 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -415,6 +415,41 @@ SWE internships. I want to understand everything.
 - A synthetic 200-male by 200-female run ranked 40,000 pairs in 7.836 seconds
   with 30.38 MB peak traced memory; no optimization was made.
 - Full-suite result after the 7c-1d fix-up: 446 tests passed.
+
+## Decisions made in step 7c-2
+- The page adds target/lethal genotype text areas, X-linked gene selection,
+  up to three linked-pair rows, relatedness exclusion, and display-only top N.
+  Genotype text uses one value per line; observed column values are examples
+  only and do not constrain input.
+- Settings are built through pure helpers in `streamlit_logic.py` and
+  validated live with `validate_run_settings`. Errors display as a bullet list;
+  a valid configuration computes `run_signature` and shows "Settings valid".
+  No ranking call or ranked-result view is wired in this step.
+- The stored settings signature uses the existing 7b-2 `input_signature` as
+  its base, so upload identity, mapping, sex mapping, and selected gene columns
+  all affect result validity. Display-only `top` does not.
+- Gene settings must come from the 7b-2 eligible gene pool. Phase-column
+  choices exclude mapped colony fields and the gene pool; gene-column options
+  exclude currently selected phases. Linked-pair gene choices use that same
+  eligible pool. Stale gene and run-setting selections are dropped when their
+  available columns change; invalid linked-pair rows are removed when a gene
+  leaves the pool.
+- The page notes lethal-survival behavior, X-linked genotype formats and
+  unlinked-gene assumptions, parent/cage flag effects, and the recombination
+  fraction input meaning. Colony genotypes remain unloaded and unvalidated;
+  ranking is not available yet.
+- X-linked target entries use the core parser and may describe either-sex
+  offspring (`A/A` or `A/Y`); malformed formats such as `A`, `A/B/C`, and
+  `/Y` are rejected. The spreadsheet note distinguishes these targets from
+  the required uploaded male and female genotype formats.
+- A shared widget-reset helper clears settings controls when the upload context
+  changes. Tests cover input-signature sensitivity, recombination validation,
+  blank linked-pair rows, target removal, stale linked-gene cleanup, and the
+  page's boundary from core ranking/loading APIs.
+- Streamlit 1.66.0 AppTest supports actual in-memory file upload via the
+  uploader's `.upload(...)` method. Page tests exercise the CSV upload and
+  live settings validation.
+- Full-suite result after the step 7c-2 fix-up: 466 tests passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv

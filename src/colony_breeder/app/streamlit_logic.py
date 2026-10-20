@@ -11,6 +11,7 @@ from colony_breeder.app.ui_helpers import (
     guess_sex_value_mapping,
 )
 from colony_breeder.app.upload import UploadResult
+from colony_breeder.app.run_settings import RunSettings, build_run_settings
 from colony_breeder.core.colony import Animal
 
 OPTIONAL_COLUMN_KEYS = ("cage", "mother_id", "father_id")
@@ -104,14 +105,107 @@ def sex_mapping_check(
 def gene_column_options(
     fieldnames: Sequence[str],
     column_mapping: Mapping[str, Optional[str]],
+    excluded_columns: Sequence[str] = (),
 ) -> List[str]:
-    """Return header columns not currently mapped to colony fields."""
+    """Return unmapped header columns, excluding explicitly reserved columns."""
     mapped_columns = {
         column
         for column in column_mapping.values()
         if column is not None and column != NONE_COLUMN
     }
-    return [column for column in fieldnames if column not in mapped_columns]
+    excluded = mapped_columns.union(excluded_columns)
+    return [column for column in fieldnames if column not in excluded]
+
+
+def phase_column_options(
+    fieldnames: Sequence[str],
+    column_mapping: Mapping[str, Optional[str]],
+    gene_pool: Sequence[str],
+) -> List[str]:
+    """Return unmapped header columns that are not selected as genes."""
+    return gene_column_options(
+        fieldnames,
+        column_mapping,
+        excluded_columns=gene_pool,
+    )
+
+
+def drop_stale_run_settings(
+    settings: RunSettings,
+    gene_pool: Sequence[str],
+    fieldnames: Sequence[str],
+    column_mapping: Mapping[str, Optional[str]],
+) -> RunSettings:
+    """Remove settings whose genes or phase columns are no longer available."""
+    mapped_columns = {
+        column
+        for column in column_mapping.values()
+        if column is not None and column != NONE_COLUMN
+    }
+    available_genes = set(gene_pool).intersection(fieldnames) - mapped_columns
+    available_phases = set(phase_column_options(fieldnames, column_mapping, gene_pool))
+    targets = {
+        gene: genotypes
+        for gene, genotypes in settings.targets.items()
+        if gene in available_genes
+    }
+    lethals = {
+        gene: genotypes
+        for gene, genotypes in settings.lethals.items()
+        if gene in available_genes
+    }
+    x_linked_genes = [
+        gene for gene in settings.x_linked_genes if gene in available_genes
+    ]
+    linked_pairs = [
+        pair
+        for pair in settings.linked_pairs
+        if (not pair[0] or pair[0] in available_genes)
+        and (not pair[1] or pair[1] in available_genes)
+        and (
+            not pair[3]
+            or (
+                pair[3] in fieldnames
+                and pair[3] not in mapped_columns
+                and pair[3] in available_phases
+            )
+        )
+    ]
+    return build_run_settings(
+        targets=targets,
+        lethals=lethals,
+        x_linked_genes=x_linked_genes,
+        linked_pairs=linked_pairs,
+        exclude_related=settings.exclude_related,
+        top=settings.top,
+    )
+
+
+def build_settings_from_widgets(
+    target_genotypes: Mapping[str, str],
+    lethal_genotypes: Mapping[str, str],
+    x_linked_genes: Sequence[str],
+    linked_pairs: Sequence[Tuple[str, str, str, str]],
+    exclude_related: bool,
+    top: Optional[int],
+) -> RunSettings:
+    """Convert widget text areas and linked-pair rows into RunSettings."""
+    targets = {
+        gene: text.splitlines()
+        for gene, text in target_genotypes.items()
+    }
+    lethals = {
+        gene: text.splitlines()
+        for gene, text in lethal_genotypes.items()
+    }
+    return build_run_settings(
+        targets=targets,
+        lethals=lethals,
+        x_linked_genes=x_linked_genes,
+        linked_pairs=linked_pairs,
+        exclude_related=exclude_related,
+        top=top,
+    )
 
 
 def drop_stale_genes(
