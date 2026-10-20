@@ -51,13 +51,17 @@ SWE internships. I want to understand everything.
       - 7b-2a: Add pure presentation logic in `app/streamlit_logic.py` (DONE).
       - 7b-2b: Add the Streamlit page in `app/streamlit_app.py` and configure
         `.streamlit/config.toml` (DONE).
-   - 7c: Add target, lethal, relatedness, and linkage settings and run core
-     ranking. <-- NEXT
-   - 7d: Show ranked results and warnings; provide a downloadable table and a
-     clear note that uploaded data is not stored.
+   - 7c-1: Add pure run settings, validation, signatures, and ranking orchestration
+     (DONE).
+   - 7c-2: Add live target, lethal, relatedness, and linkage settings controls
+     (DONE).
+   - 7c-3: Wire ranking to an explicit button and display the run result (DONE).
+   - 7d: Add a downloadable ranked table and a clear note that uploaded data
+     is not stored.
+     <-- NEXT
    - 7e: Deploy on Streamlit Community Cloud and document Google Sheets input
      via download or published link.
-   - Latest full-suite result: 450 tests passed.
+   - Latest full-suite result: 479 tests passed.
 8. README (what it does, input format, examples, math, limitations/roadmap,
    Related Work) + deploy on Streamlit Community Cloud
 9. Later: multi-generation planning, breeder age limits, inbreeding coefficient
@@ -450,6 +454,50 @@ SWE internships. I want to understand everything.
   uploader's `.upload(...)` method. Page tests exercise the CSV upload and
   live settings validation.
 - Full-suite result after the step 7c-2 fix-up: 466 tests passed.
+
+## Decisions made in step 7c-3
+- The "Run ranking" button is enabled only for valid settings. Ranking runs
+  only on that click; the immutable `RunResult` and its settings signature are
+  stored in session state. Stored successful results display only while
+  `result_is_current` matches the current signature. Changing a signature
+  input hides the result; changing display-only `top` keeps it current and
+  applies the new limit through `visible_ranked`.
+- The run reloads genotype and phase columns on demand, using the sex values
+  already normalized by the structure-loading step. Run errors display as
+  plain messages, split into bullets when they contain `"; "`.
+- Results summarize ranked, visible, zero-probability-hidden, top-hidden,
+  skipped-by-kind, and excluded-animal counts. All core notes are displayed
+  verbatim, pedigree messages include their severity, ranked rows show exact
+  fractions and decimals plus flags/per-gene/linked factors, and expandable
+  tables include every skipped pair and excluded animal.
+- New presentation formatting stays in pure `app/streamlit_logic.py`.
+  Linked-pair validation errors use 1-based labels such as "Linked pair 1";
+  dropped stale linked configurations show a one-line notice.
+- The sample `Cre/Cre` run was executed to establish the AppTest expectation:
+  30 ranked and 5 skipped; its first three pairs are M01×F04,
+  M03×F04, M05×F04, each at exactly `1/2`. Their flags are respectively
+  parent-offspring, full siblings, and half siblings through the mother.
+- An AppTest page run of a synthetic 200-male × 200-female colony ranked
+  40,000 pairs in 1.740 seconds. The measuring script was not saved. This
+  clicked the Streamlit Run ranking button;
+  the stopwatch covered that AppTest rerun and result rendering. The generated
+  CSV had 400 animals, one gene (`A`), no linked pairs, and target `A/a`;
+  all animals were `A/a`, all 40,000 pairs ranked, and none were skipped.
+  This was the cheapest workload: uniform genotypes, one gene, no linkage,
+  no skipped pairs, and an empty skipped-pairs expander. It says nothing about
+  heavier runs.
+  `perf_counter` measured elapsed time with `tracemalloc` off. This is one
+  local measurement, not a performance guarantee; no optimization was made.
+- The earlier direct 200×200 `run_ranking` measurement (7.836 seconds,
+  30.38 MB peak traced memory) had `tracemalloc` on, so it is not directly
+  comparable to the AppTest timing.
+- Run errors are stored with the page's run signature and shown on later
+  reruns while that signature remains current. They are hidden when settings
+  become invalid or a signature input changes; an errored `RunResult` is never
+  rendered as ranking results. Loader-argument errors use the same persisted
+  error state.
+- Full-suite result after the step 7c-3 error-persistence fix-up: 479 tests
+  passed.
 
 ## Environment
 - Windows, PowerShell, Python 3.14, virtualenv in .venv

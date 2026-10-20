@@ -1,4 +1,5 @@
 from pathlib import Path
+from fractions import Fraction
 import re
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest
+import colony_breeder.app.run_ranking as run_ranking_module
 
 _CSV_CONTENT = (
     b"Animal ID,Sex,Cage,Dam,Sire,Cre\n"
@@ -28,6 +30,7 @@ _APP_PATH = (
     / "app"
     / "streamlit_app.py"
 )
+_SAMPLE_CSV_PATH = Path(__file__).parents[1] / "data" / "sample_mice.csv"
 
 
 def _rendered_markdown(app):
@@ -77,6 +80,29 @@ def _set_valid_target(app, gene, genotype):
     assert not app.exception
 
 
+def _loaded_sample_settings_app():
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "sample_mice.csv",
+        _SAMPLE_CSV_PATH.read_bytes(),
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    gene_pool = next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    )
+    gene_pool.select("Cre").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Cre", "Cre/Cre")
+    return app
+
+
 def test_streamlit_page_renders_upload_widget():
     app = AppTest.from_file(str(_APP_PATH)).run()
 
@@ -102,11 +128,11 @@ def test_upload_and_load_shows_animal_and_unknown_sex_counts():
     assert "Loaded animals: 2" in rendered
     assert "Animals with unknown sex: 1" in rendered
     assert sum(
-        "Genotypes have NOT been loaded or validated" in element.value
+        "Colony structure is loaded" in element.value
         for element in app.caption
     ) == 1
     assert sum(
-        "Genotypes have NOT been loaded or validated" in element.value
+        "Colony structure is loaded" in element.value
         for element in app.info
     ) == 1
 
@@ -206,8 +232,10 @@ def test_settings_controls_validate_live_without_running_ranking():
 
     assert not app.exception
     assert any(element.value == "Settings valid." for element in app.success)
-    assert any("ranking is not available yet" in element.value for element in app.caption)
-    assert all(button.label != "Run ranking" for button in app.button)
+    assert any("Genotypes are parsed and validated when you run ranking" in element.value for element in app.info)
+    assert not next(
+        button for button in app.button if button.label == "Run ranking"
+    ).disabled
     assert "Ranked results" not in [element.value for element in app.subheader]
 
 
@@ -402,11 +430,372 @@ def test_removing_gene_from_pool_cleans_stale_linked_selectbox_state():
     ).value == 0
     assert app.session_state["run_settings_draft"].linked_pairs == ()
     assert "A" not in app.session_state["run_settings_draft"].targets
+    assert any(
+        "Linked pair 1 was removed" in element.value
+        for element in app.info
+    )
 
 
-def test_page_source_does_not_import_or_call_core_ranking_or_colony_loader():
+def test_page_calls_app_ranking_orchestrator_but_not_core_ranking_or_loader():
     source = _APP_PATH.read_text(encoding="utf-8")
 
-    assert "run_ranking" not in source
+    assert "from colony_breeder.app.run_ranking import" in source
+    assert "run_ranking(" in source
     assert "rank_pairs" not in source
     assert not re.search(r"\bload_colony(?:_rows)?\s*\(", source)
+
+
+def test_sample_mice_rank_order_and_relatedness_flags_are_displayed():
+    app = _loaded_sample_settings_app()
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+
+    assert not app.exception
+    result = app.session_state["run_result"]
+    assert result.error_message is None
+    assert len(result.ranked) == 30
+    assert len(result.skipped) == 5
+    assert [
+        (pair.male_id, pair.female_id, pair.probability)
+        for pair in result.ranked[:3]
+    ] == [
+        ("M01", "F04", Fraction(1, 2)),
+        ("M03", "F04", Fraction(1, 2)),
+        ("M05", "F04", Fraction(1, 2)),
+    ]
+    assert result.ranked[0].flags == ("parent_offspring",)
+    assert result.ranked[1].flags == ("full_siblings",)
+    assert result.ranked[2].flags == ("half_siblings_mother",)
+    assert any("Ranked pairs: 30" == element.value for element in app.markdown)
+    assert any("Pairs hidden by top: 0" == element.value for element in app.markdown)
+    table_text = " ".join(
+        str(record)
+        for record in app.dataframe[1].value.to_dict(orient="records")
+    )
+    assert "parent_offspring" in table_text
+    assert "full_siblings" in table_text
+    assert "half_siblings_mother" in table_text
+    assert any("Skipped pairs (5)" in element.label for element in app.expander)
+    assert len(app.dataframe[2].value) == 5
+
+
+def test_core_notes_are_shown_unchanged():
+    app = _loaded_settings_app(["Cre"])
+    _set_valid_target(app, "Cre", "Cre/+")
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+
+    note = (
+        "Some animals were excluded because sex is blank or unrecognized, "
+        "so they can't be assigned a male or female role."
+    )
+    assert note in app.session_state["run_result"].notes
+    assert any(element.value == note for element in app.info)
+
+
+def test_x_linked_male_genotype_error_is_plain_and_has_no_traceback():
+    invalid_male_csv = (
+        b"animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        b"M01,M,C1,,,A/A\n"
+        b"F01,F,C2,,,A/a\n"
+    )
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "x-linked-invalid.csv",
+        invalid_male_csv,
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    pool = next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    )
+    pool.select("Xgene").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Xgene", "A/Y")
+    next(widget for widget in app.multiselect if widget.label == "X-linked genes").select(
+        "Xgene"
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+
+    assert not app.exception
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" in displayed_error
+    assert "male" in displayed_error.lower()
+    assert "Traceback" not in displayed_error
+
+
+def test_failed_run_error_persists_for_current_settings_and_top_change(monkeypatch):
+    calls = []
+    original_run_ranking = run_ranking_module.run_ranking
+
+    def count_runs(*args, **kwargs):
+        calls.append(1)
+        return original_run_ranking(*args, **kwargs)
+
+    monkeypatch.setattr(run_ranking_module, "run_ranking", count_runs)
+    invalid_male_csv = (
+        b"animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        b"M01,M,C1,,,A/A\n"
+        b"F01,F,C2,,,A/a\n"
+    )
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "x-linked-invalid.csv",
+        invalid_male_csv,
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    ).select("Xgene").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Xgene", "A/Y")
+    next(widget for widget in app.multiselect if widget.label == "X-linked genes").select(
+        "Xgene"
+    ).run(timeout=30)
+
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    failed_message = app.session_state["run_error"]
+    assert "Row 2:" in failed_message
+    assert calls == [1]
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" in displayed_error
+
+    next(widget for widget in app.number_input if widget.label == "Top N pairs to show").set_value(
+        1
+    ).run(timeout=30)
+
+    assert calls == [1]
+    assert "Ranking results" not in [element.value for element in app.subheader]
+    assert app.session_state["run_error"] == failed_message
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" in displayed_error
+
+
+def test_changed_valid_x_linked_target_hides_error_without_rerunning_ranking(
+    monkeypatch,
+):
+    calls = []
+    original_run_ranking = run_ranking_module.run_ranking
+
+    def count_runs(*args, **kwargs):
+        calls.append(1)
+        return original_run_ranking(*args, **kwargs)
+
+    monkeypatch.setattr(run_ranking_module, "run_ranking", count_runs)
+    invalid_male_csv = (
+        b"animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        b"M01,M,C1,,,A/A\n"
+        b"F01,F,C2,,,A/a\n"
+    )
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "x-linked-invalid.csv",
+        invalid_male_csv,
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    ).select("Xgene").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Xgene", "A/Y")
+    next(widget for widget in app.multiselect if widget.label == "X-linked genes").select(
+        "Xgene"
+    ).run(timeout=30)
+
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert sum("Row 2:" in element.value for element in (*app.error, *app.markdown)) == 1
+    assert calls == [1]
+    assert "Row 2:" in displayed_error
+
+    next(
+        widget
+        for widget in app.text_area
+        if widget.label.startswith("Target genotypes for Xgene")
+    ).set_value("A/A").run(timeout=30)
+
+    assert any(element.value == "Settings valid." for element in app.success)
+    assert "Breeding settings" in [element.value for element in app.header]
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" not in displayed_error
+    assert "Ranking results" not in [element.value for element in app.subheader]
+    assert calls == [1]
+
+
+def test_signature_change_hides_persisted_run_error():
+    invalid_male_csv = (
+        b"animal_id,sex,cage,mother_id,father_id,Xgene\n"
+        b"M01,M,C1,,,A/A\n"
+        b"F01,F,C2,,,A/a\n"
+    )
+    app = AppTest.from_file(str(_APP_PATH)).run()
+    app.get("file_uploader")[0].upload(
+        "x-linked-invalid.csv",
+        invalid_male_csv,
+        "text/csv",
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    next(
+        widget
+        for widget in app.multiselect
+        if widget.label == "Gene columns to inspect (not parsed in this step)"
+    ).select("Xgene").run(timeout=30)
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    _set_valid_target(app, "Xgene", "A/Y")
+    next(widget for widget in app.multiselect if widget.label == "X-linked genes").select(
+        "Xgene"
+    ).run(timeout=30)
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    assert "Row 2:" in app.session_state["run_error"]
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" in displayed_error
+
+    next(widget for widget in app.selectbox if widget.label == "M").select(
+        "unknown"
+    ).run(timeout=30)
+
+    displayed_error = " ".join(
+        [element.value for element in app.error]
+        + [element.value for element in app.markdown]
+    )
+    assert "Row 2:" not in displayed_error
+    assert "Ranking results" not in [element.value for element in app.subheader]
+
+
+def test_loader_argument_error_is_saved_and_persists_for_current_settings():
+    app = _loaded_sample_settings_app()
+    app.session_state["loaded_result"].animals.clear()
+
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    message = app.session_state["run_error"]
+    assert "missing from the loaded colony" in message
+    assert any(
+        "missing from the loaded colony" in element.value
+        for element in app.error
+    )
+
+    next(widget for widget in app.number_input if widget.label == "Top N pairs to show").set_value(
+        1
+    ).run(timeout=30)
+
+    assert app.session_state["run_error"] == message
+    assert any(
+        "missing from the loaded colony" in element.value
+        for element in app.error
+    )
+    assert "Ranking results" not in [element.value for element in app.subheader]
+
+
+def test_invalid_settings_hide_previous_successful_ranking_result():
+    app = _loaded_sample_settings_app()
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    assert "Ranking results" in [element.value for element in app.subheader]
+
+    next(
+        widget
+        for widget in app.text_area
+        if widget.label.startswith("Target genotypes for Cre")
+    ).set_value("").run(timeout=30)
+
+    assert "Ranking results" not in [element.value for element in app.subheader]
+    assert any(
+        "Settings need attention:" in element.value
+        for element in app.error
+    )
+
+
+def test_ranking_runs_only_on_click_and_result_validity_tracks_inputs(monkeypatch):
+    calls = []
+    original_run_ranking = run_ranking_module.run_ranking
+
+    def count_runs(*args, **kwargs):
+        calls.append(1)
+        return original_run_ranking(*args, **kwargs)
+
+    monkeypatch.setattr(run_ranking_module, "run_ranking", count_runs)
+    app = _loaded_sample_settings_app()
+    assert calls == []
+
+    app.run(timeout=30)
+    assert calls == []
+
+    next(button for button in app.button if button.label == "Run ranking").click().run(
+        timeout=30
+    )
+    assert calls == [1]
+    successful_signature = app.session_state["run_result_signature"]
+
+    next(widget for widget in app.number_input if widget.label == "Top N pairs to show").set_value(
+        1
+    ).run(timeout=30)
+    assert calls == [1]
+    assert app.session_state["run_result_signature"] == successful_signature
+    assert "Ranking results" in [element.value for element in app.subheader]
+    assert any("Visible nonzero pairs: 1" == element.value for element in app.markdown)
+
+    next(widget for widget in app.selectbox if widget.label == "M").select(
+        "unknown"
+    ).run(timeout=30)
+    assert "Ranking results" not in [element.value for element in app.subheader]
+
+    next(button for button in app.button if button.label == "Load colony").click().run(
+        timeout=30
+    )
+    assert calls == [1]
+    assert "Ranking results" not in [element.value for element in app.subheader]

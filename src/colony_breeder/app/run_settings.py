@@ -206,18 +206,19 @@ def validate_run_settings(
 
     linked_genes = set()
     used_phase_columns = set()
-    for linked_pair in settings.linked_pairs:
+    for pair_index, linked_pair in enumerate(settings.linked_pairs, start=1):
         if len(linked_pair) != 4:
             errors.append(
-                "Each linked pair must contain gene1, gene2, r text, and phase column."
+                f"Linked pair {pair_index} must contain gene1, gene2, r text, "
+                "and phase column."
             )
             continue
         gene1, gene2, r_text, phase_column = linked_pair
-        label = f"({gene1!r}, {gene2!r})"
+        label = f"Linked pair {pair_index}"
         if not gene1 or not gene2:
-            errors.append(f"Linked pair {label} must name two genes.")
+            errors.append(f"{label} must name two genes.")
         if gene1 == gene2:
-            errors.append(f"Linked pair {label} cannot use the same gene twice.")
+            errors.append(f"{label} cannot use the same gene twice.")
         for gene in dict.fromkeys((gene1, gene2)):
             if gene and gene not in available_genes:
                 errors.append(
@@ -230,15 +231,15 @@ def validate_run_settings(
             linked_genes.add(gene)
             if gene in settings.x_linked_genes:
                 errors.append(
-                    f"Linked pair {label} cannot include X-linked gene {gene!r}."
+                    f"{label} cannot include X-linked gene {gene!r}."
                 )
 
         if not phase_column:
-            errors.append(f"Linked pair {label} needs a phase column.")
+            errors.append(f"{label} needs a phase column.")
         else:
             if phase_column not in available_columns:
                 errors.append(
-                    f"Phase column {phase_column!r} for linked pair {label} "
+                    f"Phase column {phase_column!r} for {label} "
                     "is not present in the uploaded headers."
                 )
             if phase_column in mapped_columns:
@@ -258,7 +259,7 @@ def validate_run_settings(
         try:
             parse_recombination_fraction(r_text)
         except ValueError as exc:
-            errors.append(f"Invalid recombination fraction for linked pair {label}: {exc}")
+            errors.append(f"Invalid recombination fraction for {label}: {exc}")
 
     if settings.top is not None and (
         isinstance(settings.top, bool)

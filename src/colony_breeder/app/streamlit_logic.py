@@ -2,16 +2,25 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from colony_breeder.app.ui_helpers import (
     NONE_COLUMN,
     UploadLoadResult,
+    build_loader_args,
     guess_column_mapping,
     guess_sex_value_mapping,
 )
 from colony_breeder.app.upload import UploadResult
 from colony_breeder.app.run_settings import RunSettings, build_run_settings
+from colony_breeder.app.run_ranking import (
+    ExcludedAnimalView,
+    RunResult,
+    SkippedPairView,
+    skipped_counts,
+    visible_ranked,
+)
 from colony_breeder.core.colony import Animal
 
 OPTIONAL_COLUMN_KEYS = ("cage", "mother_id", "father_id")
@@ -208,6 +217,37 @@ def build_settings_from_widgets(
     )
 
 
+def build_ranking_upload_args(
+    upload: UploadResult,
+    column_mapping: Mapping[str, Optional[str]],
+    loaded_animals: Sequence[Animal],
+) -> Dict[str, object]:
+    """Build copied loader inputs with sex values normalized by the load step."""
+    args = build_loader_args(
+        upload.fieldnames,
+        upload.rows,
+        column_mapping,
+        upload.first_data_row,
+    )
+    normalized_mapping = args["column_mapping"]
+    animals_by_id = {animal.animal_id: animal for animal in loaded_animals}
+    animal_id_column = normalized_mapping["animal_id"]
+    sex_column = normalized_mapping["sex"]
+
+    for row in args["rows"]:
+        raw_animal_id = row.get(animal_id_column, "")
+        animal_id = "" if raw_animal_id is None else str(raw_animal_id).strip()
+        if not animal_id:
+            continue
+        animal = animals_by_id.get(animal_id)
+        if animal is None:
+            raise ValueError(
+                f"Animal {animal_id!r} is missing from the loaded colony."
+            )
+        row[sex_column] = animal.sex
+    return args
+
+
 def drop_stale_genes(
     selected: Sequence[str],
     options: Sequence[str],
@@ -236,6 +276,124 @@ def input_signature(
         tuple(sorted(sex_mapping.items())),
         tuple(gene_selection),
     )
+
+
+def stale_linked_pair_notices(
+    previous: Optional[RunSettings],
+    current: Optional[RunSettings],
+) -> Tuple[str, ...]:
+    """Describe linked-pair settings removed while cleaning stale selections."""
+    if previous is None:
+        return ()
+
+    remaining = list(current.linked_pairs) if current is not None else []
+    notices = []
+    for index, pair in enumerate(previous.linked_pairs, start=1):
+        if pair in remaining:
+            remaining.remove(pair)
+        else:
+            notices.append(
+                f"Linked pair {index} was removed because its gene or phase "
+                "column is no longer available."
+            )
+    return tuple(notices)
+
+
+def format_fraction_with_decimal(probability: Fraction) -> str:
+    """Show an exact probability alongside a readable decimal approximation."""
+    return f"{probability} ({float(probability):.4f})"
+
+
+def split_error_message(message: str) -> Tuple[str, ...]:
+    """Split semicolon-delimited validation/run errors into display bullets."""
+    return tuple(part.strip() for part in message.split("; ") if part.strip())
+
+
+def format_flags(flags: Sequence[str]) -> str:
+    """Format core flag names without changing their wording."""
+    return ", ".join(flags) if flags else "-"
+
+
+def ranked_pair_rows(
+    result: RunResult,
+    settings: RunSettings,
+) -> List[Dict[str, str]]:
+    """Build display rows for visible pairs, preserving the core ranking order."""
+    shown_pairs, _, _ = visible_ranked(result, settings.top)
+    descriptive_genes = set(settings.x_linked_genes)
+    descriptive_genes.update(
+        gene
+        for gene1, gene2, _, _ in settings.linked_pairs
+        for gene in (gene1, gene2)
+    )
+    rows = []
+    for pair in shown_pairs:
+        per_gene = "; ".join(
+            f"{gene}={probability}"
+            + (" (descriptive)" if gene in descriptive_genes else "")
+            for gene, probability in pair.per_gene
+        )
+        linked_factors = "; ".join(
+            f"{gene1},{gene2}={format_fraction_with_decimal(probability)}"
+            for (gene1, gene2), probability in pair.linked_pair_probabilities
+        )
+        rows.append(
+            {
+                "Male": pair.male_id,
+                "Female": pair.female_id,
+                "Probability (exact; decimal)": format_fraction_with_decimal(
+                    pair.probability
+                ),
+                "Flags": format_flags(pair.flags),
+                "Per-gene values (linked/X values marked descriptive; do not multiply those)": (
+                    per_gene or "-"
+                ),
+                "Linked-pair factors": linked_factors or "-",
+            }
+        )
+    return rows
+
+
+def run_result_summary(result: RunResult, top: Optional[int]) -> Tuple[str, ...]:
+    """Format complete pair-count summaries without omitting hidden categories."""
+    shown_pairs, zero_count, hidden_by_top = visible_ranked(result, top)
+    counts = skipped_counts(result)
+    return (
+        f"Ranked pairs: {len(result.ranked)}",
+        f"Visible nonzero pairs: {len(shown_pairs)}",
+        f"Zero-probability pairs hidden: {zero_count}",
+        f"Pairs hidden by top: {hidden_by_top}",
+        f"Skipped pairs: {len(result.skipped)}",
+        f"Excluded animals: {len(result.excluded_animals)}",
+        "Skipped pairs by kind: "
+        + ", ".join(f"{kind}={count}" for kind, count in counts.items()),
+    )
+
+
+def skipped_pair_rows(
+    skipped: Sequence[SkippedPairView],
+) -> List[Dict[str, str]]:
+    """Return every skipped pair as a display-ready row."""
+    return [
+        {
+            "Male": pair.male_id,
+            "Female": pair.female_id,
+            "Kind": pair.kind,
+            "Reason": pair.reason,
+            "Flags": format_flags(pair.flags),
+        }
+        for pair in skipped
+    ]
+
+
+def excluded_animal_rows(
+    excluded_animals: Sequence[ExcludedAnimalView],
+) -> List[Dict[str, str]]:
+    """Return every excluded animal as a display-ready row."""
+    return [
+        {"Animal": animal.animal_id, "Reason": animal.reason}
+        for animal in excluded_animals
+    ]
 
 
 def preview_rows(

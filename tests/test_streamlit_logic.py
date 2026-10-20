@@ -1,22 +1,32 @@
 from dataclasses import FrozenInstanceError
+from fractions import Fraction
 
 import pytest
 
 from colony_breeder.app.streamlit_logic import (
     LoadResultView,
     colony_sex_warnings,
+    build_ranking_upload_args,
     build_settings_from_widgets,
     default_column_selections,
     default_sex_value_mapping,
     drop_stale_genes,
     drop_stale_run_settings,
+    excluded_animal_rows,
+    format_flags,
+    format_fraction_with_decimal,
     format_load_result,
     gene_column_options,
     input_signature,
     phase_column_options,
     preview_rows,
+    ranked_pair_rows,
+    run_result_summary,
     sex_mapping_check,
     sex_value_label,
+    skipped_pair_rows,
+    split_error_message,
+    stale_linked_pair_notices,
 )
 from colony_breeder.app.ui_helpers import (
     NONE_COLUMN,
@@ -26,6 +36,12 @@ from colony_breeder.app.ui_helpers import (
     load_from_upload,
 )
 from colony_breeder.app.run_settings import build_run_settings
+from colony_breeder.app.run_ranking import (
+    ExcludedAnimalView,
+    RankedPairView,
+    RunResult,
+    SkippedPairView,
+)
 from colony_breeder.app.upload import UploadResult
 from colony_breeder.core.colony import Animal
 
@@ -366,3 +382,126 @@ def test_colony_sex_warnings_for_missing_sex_groups():
     assert any("no males" in warning.lower() for warning in colony_sex_warnings([_animal("F01", "F")]))
     assert any("no females" in warning.lower() for warning in colony_sex_warnings([_animal("M01", "M")]))
     assert colony_sex_warnings([_animal("M01", "M"), _animal("F01", "F")]) == []
+
+
+def test_build_ranking_upload_args_uses_loaded_sex_mapping_without_mutating_upload():
+    rows = [
+        {
+            "ID": "M01",
+            "Gender": "male",
+            "Cage": "C1",
+            "Dam": "",
+            "Sire": "",
+            "Cre": "Cre/+",
+        }
+    ]
+    fieldnames = ["ID", "Gender", "Cage", "Dam", "Sire", "Cre"]
+    upload = _upload(rows, fieldnames=fieldnames)
+    mapping = {
+        "animal_id": "ID",
+        "sex": "Gender",
+        "cage": "Cage",
+        "mother_id": "Dam",
+        "father_id": "Sire",
+    }
+
+    args = build_ranking_upload_args(
+        upload,
+        mapping,
+        [_animal("M01", "M")],
+    )
+
+    assert args["rows"][0]["Gender"] == "M"
+    assert upload.rows[0]["Gender"] == "male"
+
+
+def test_ranking_formatters_preserve_probabilities_messages_flags_and_all_rows():
+    settings = build_run_settings(
+        targets={"A": "A/A"},
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+        top=1,
+    )
+    result = RunResult(
+        ranked=(
+            RankedPairView(
+                "M01",
+                "F01",
+                Fraction(1, 2),
+                (("A", Fraction(1, 2)), ("B", Fraction(1, 4))),
+                ((("A", "B"), Fraction(1, 2)),),
+                ("full_siblings",),
+            ),
+            RankedPairView(
+                "M02",
+                "F02",
+                Fraction(1, 4),
+                (),
+                (),
+                (),
+            ),
+        ),
+        skipped=(
+            SkippedPairView("M01", "F03", "missing_phase", "Phase is blank.", ()),
+            SkippedPairView("M02", "F04", "all_lethal", "All offspring are lethal.", ("same_cage",)),
+        ),
+        excluded_animals=(ExcludedAnimalView("U01", "sex is blank"),),
+        notes=("Core note, unchanged.",),
+        pedigree_warnings=(("warning", "Core pedigree warning."),),
+        signature=("current",),
+        error_message=None,
+    )
+
+    assert format_fraction_with_decimal(Fraction(1, 2)) == "1/2 (0.5000)"
+    assert split_error_message("First issue; Second issue") == (
+        "First issue",
+        "Second issue",
+    )
+    assert format_flags(("full_siblings", "same_cage")) == "full_siblings, same_cage"
+    assert format_flags(()) == "-"
+
+    ranked_rows = ranked_pair_rows(result, settings)
+    assert len(ranked_rows) == 1
+    assert ranked_rows[0]["Male"] == "M01"
+    assert ranked_rows[0]["Probability (exact; decimal)"] == "1/2 (0.5000)"
+    assert ranked_rows[0]["Flags"] == "full_siblings"
+    assert "A=1/2 (descriptive)" in ranked_rows[0][
+        "Per-gene values (linked/X values marked descriptive; do not multiply those)"
+    ]
+    assert ranked_rows[0]["Linked-pair factors"] == "A,B=1/2 (0.5000)"
+
+    skipped_rows = skipped_pair_rows(result.skipped)
+    assert len(skipped_rows) == len(result.skipped)
+    assert skipped_rows[1]["Flags"] == "same_cage"
+    assert excluded_animal_rows(result.excluded_animals) == [
+        {"Animal": "U01", "Reason": "sex is blank"}
+    ]
+    summary = run_result_summary(result, top=1)
+    assert summary[:6] == (
+        "Ranked pairs: 2",
+        "Visible nonzero pairs: 1",
+        "Zero-probability pairs hidden: 0",
+        "Pairs hidden by top: 1",
+        "Skipped pairs: 2",
+        "Excluded animals: 1",
+    )
+    assert "missing_genotype=0" in summary[6]
+    assert "missing_phase=1" in summary[6]
+    assert "all_lethal=1" in summary[6]
+
+
+def test_stale_linked_pair_notice_names_the_removed_pair():
+    previous = build_run_settings(
+        targets={"A": "A/a"},
+        linked_pairs=[
+            ("A", "B", "1/10", "AB_phase"),
+            ("C", "D", "1/10", "CD_phase"),
+        ],
+    )
+    current = build_run_settings(
+        targets={"A": "A/a"},
+        linked_pairs=[("A", "B", "1/10", "AB_phase")],
+    )
+
+    assert stale_linked_pair_notices(previous, current) == (
+        "Linked pair 2 was removed because its gene or phase column is no longer available.",
+    )

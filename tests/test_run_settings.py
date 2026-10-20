@@ -276,6 +276,16 @@ def test_phase_column_cannot_be_shared_between_linked_pairs():
     assert any("cannot be shared between linked pairs" in error for error in errors)
 
 
+def test_linked_pair_validation_errors_use_one_based_pair_number():
+    errors = _errors(
+        _settings(linked_pairs=[("", "B", "1/10", "")])
+    )
+
+    assert "Linked pair 1 must name two genes." in errors
+    assert "Linked pair 1 needs a phase column." in errors
+    assert not any("('', 'B')" in error for error in errors)
+
+
 @pytest.mark.parametrize("top", [0, -1, True, 1.5])
 def test_top_must_be_a_positive_integer_when_set(top):
     errors = _errors(_settings(top=top))

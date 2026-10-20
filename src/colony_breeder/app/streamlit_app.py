@@ -1,4 +1,4 @@
-"""Streamlit upload page for loading colony structure only."""
+"""Streamlit page for loading and ranking an uploaded colony."""
 
 import hashlib
 from typing import Dict, Optional, Sequence, Tuple
@@ -12,13 +12,25 @@ from colony_breeder.app.streamlit_logic import (
     default_sex_value_mapping,
     drop_stale_genes,
     drop_stale_run_settings,
+    build_ranking_upload_args,
+    excluded_animal_rows,
     format_load_result,
     gene_column_options,
     input_signature,
     phase_column_options,
     preview_rows,
+    ranked_pair_rows,
+    run_result_summary,
     sex_mapping_check,
     sex_value_label,
+    skipped_pair_rows,
+    split_error_message,
+    stale_linked_pair_notices,
+)
+from colony_breeder.app.run_ranking import (
+    RunResult,
+    result_is_current,
+    run_ranking,
 )
 from colony_breeder.app.run_settings import (
     RunSettings,
@@ -56,8 +68,8 @@ _SETTINGS_WIDGET_PREFIXES = (
     *_LINKED_WIDGET_PREFIXES,
 )
 _STRUCTURE_NOTICE = (
-    "Genotypes have NOT been loaded or validated from the colony. Settings are "
-    "validated, but ranking is not available yet."
+    "Colony structure is loaded. Genotypes are parsed and validated when you "
+    "run ranking."
 )
 
 
@@ -80,6 +92,9 @@ def _reset_upload_state() -> None:
         "run_settings_draft",
         "settings_context",
         "settings_signature",
+        "run_result",
+        "run_result_signature",
+        "run_error",
     ):
         st.session_state.pop(key, None)
     for key in _MAPPING_WIDGETS:
@@ -183,12 +198,56 @@ def _display_load_result(result: UploadLoadResult) -> None:
         st.write(f"{gene}: {', '.join(values)}")
 
 
+def _display_run_error(message: str) -> None:
+    errors = split_error_message(message)
+    if len(errors) > 1:
+        st.error("Ranking could not be completed:")
+        st.markdown("\n".join(f"- {error}" for error in errors))
+    else:
+        st.error(message)
+
+
+def _display_run_result(result: RunResult, settings: RunSettings) -> None:
+    st.subheader("Ranking results")
+    for line in run_result_summary(result, settings.top):
+        st.write(line)
+
+    for note in result.notes:
+        st.info(note)
+    if result.pedigree_warnings:
+        st.markdown("**Pedigree warnings**")
+        for severity, message in result.pedigree_warnings:
+            st.markdown(f"**{severity}**")
+            st.write(message)
+
+    rows = ranked_pair_rows(result, settings)
+    if rows:
+        st.dataframe(rows, width="stretch")
+    else:
+        st.write("No nonzero-probability pairs to display.")
+
+    with st.expander(f"Skipped pairs ({len(result.skipped)})"):
+        rows = skipped_pair_rows(result.skipped)
+        if rows:
+            st.dataframe(rows, width="stretch")
+        else:
+            st.write("No skipped pairs.")
+
+    with st.expander(f"Excluded animals ({len(result.excluded_animals)})"):
+        rows = excluded_animal_rows(result.excluded_animals)
+        if rows:
+            st.dataframe(rows, width="stretch")
+        else:
+            st.write("No excluded animals.")
+
+
 def _settings_controls(
     upload: UploadResult,
     column_mapping: Dict[str, Optional[str]],
     gene_pool: Sequence[str],
     settings_context: tuple,
     base_signature: tuple,
+    loaded_result: UploadLoadResult,
 ) -> None:
     st.header("Breeding settings")
     st.caption(
@@ -231,6 +290,11 @@ def _settings_controls(
             upload.fieldnames,
             column_mapping,
         )
+        for notice in stale_linked_pair_notices(
+            st.session_state.get("run_settings_draft"),
+            previous_settings,
+        ):
+            st.info(notice)
         st.session_state["run_settings_draft"] = previous_settings
 
     phase_options = phase_column_options(
@@ -501,6 +565,57 @@ def _settings_controls(
         )
         st.success("Settings valid.")
 
+    run_clicked = st.button("Run ranking", disabled=bool(errors))
+    if run_clicked:
+        st.session_state.pop("run_result", None)
+        st.session_state.pop("run_result_signature", None)
+        st.session_state.pop("run_error", None)
+        try:
+            upload_args = build_ranking_upload_args(
+                upload,
+                column_mapping,
+                loaded_result.animals,
+            )
+        except ValueError as exc:
+            st.session_state["run_error"] = str(exc)
+            st.session_state["run_result_signature"] = st.session_state[
+                "settings_signature"
+            ]
+        else:
+            result = run_ranking(
+                upload_args,
+                settings,
+                eligible_gene_pool,
+                upload.fieldnames,
+                column_mapping,
+                base_signature,
+            )
+            st.session_state["run_result"] = result
+            st.session_state["run_result_signature"] = st.session_state[
+                "settings_signature"
+            ]
+            if result.error_message:
+                st.session_state["run_error"] = result.error_message
+
+    current_signature = st.session_state.get("settings_signature")
+    stored_result_signature = st.session_state.get("run_result_signature")
+    if (
+        current_signature is not None
+        and stored_result_signature == current_signature
+        and st.session_state.get("run_error") is not None
+    ):
+        _display_run_error(st.session_state["run_error"])
+
+    stored_result = st.session_state.get("run_result")
+    if (
+        stored_result is not None
+        and current_signature is not None
+        and stored_result_signature == current_signature
+        and stored_result.error_message is None
+        and result_is_current(stored_result, current_signature)
+    ):
+        _display_run_result(stored_result, settings)
+
 
 def _choose_workbook_sheet() -> None:
     """Show a sheet picker after discovery and persist its selected sheet."""
@@ -695,6 +810,7 @@ def main() -> None:
                     gene_selection,
                     settings_context,
                     signature,
+                    stored_result,
                 )
         else:
             st.info("Inputs changed; press Load colony again to refresh the result.")
