@@ -8,8 +8,7 @@ and get a ranked list of pairs.
 (free hosting, so it may take a few seconds to wake up)
 
 > Do not upload real lab data to the hosted app. Uploads are processed on the
-> host's server. To use real data, run the app locally (instructions below).
-
+> host's server. To use real data, run the app locally (see [Run it locally](#run-it-locally)).
 ## Try it in 2 minutes
 
 1. Open the live app and upload `data/sample_mice.csv` from this repo (fake demo data).
@@ -21,7 +20,36 @@ and get a ranked list of pairs.
 
 You should see the top pairs at exactly 1/2, each flagged for how the animals are
 related (parent-offspring, full siblings, half siblings).
+## Run it locally
 
+Requires Python 3.9 or newer.
+
+```bash
+git clone https://github.com/EdZLau/colony-breeder-optimizer.git
+cd colony-breeder-optimizer
+python -m venv .venv
+```
+
+Activate the virtual environment:
+
+- Windows (PowerShell): `.venv\Scripts\Activate.ps1`
+- macOS / Linux: `source .venv/bin/activate`
+
+Then install and start the app:
+
+```bash
+pip install -e ".[app]"
+streamlit run src/colony_breeder/app/streamlit_app.py
+```
+
+Your browser opens the app. Uploaded files stay on your own computer.
+
+To run the tests, install the dev extras and run pytest:
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
 ## Status
 
 Working: autosomal genes, X-linked genes, linked genes (with recombination
